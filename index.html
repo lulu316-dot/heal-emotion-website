@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>东西方思想碰撞 | 情感疗愈</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #0a0e1a;
+      font-family: "Noto Serif SC", "Songti SC", "SimSun", serif;
+      touch-action: none;
+      user-select: none;
+    }
+
+    #stage {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      background: #0a0e1a;
+    }
+
+    #prompt {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 20px;
+      line-height: 1.4;
+      letter-spacing: 0;
+      white-space: nowrap;
+      pointer-events: none;
+      animation: promptBreath 3s ease-in-out infinite;
+      text-shadow: 0 0 18px rgba(255, 255, 255, 0.22);
+    }
+
+    #flash {
+      position: fixed;
+      inset: 0;
+      background: #ffffff;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    #fps {
+      position: fixed;
+      right: 14px;
+      bottom: 12px;
+      z-index: 4;
+      color: rgba(255, 255, 255, 0.48);
+      font: 12px/1.4 Consolas, Monaco, monospace;
+      pointer-events: none;
+    }
+
+    @keyframes promptBreath {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 0.9; }
+    }
+
+    @media (max-width: 520px) {
+      #prompt {
+        width: min(84vw, 420px);
+        font-size: 18px;
+        white-space: normal;
+        text-align: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="stage" aria-hidden="true"></canvas>
+  <div id="prompt">点击任意处，开启跨时空疗愈</div>
+  <div id="flash"></div>
+  <div id="fps">FPS 60</div>
+
+  <script>
+    "use strict";
+
+    /*
+      技术说明：
+      1. 所有粒子在启动时一次性创建，运行时只复用对象，避免 GC 抖动。
+      2. 主循环不使用 clearRect，而是用半透明深色矩形覆盖，形成柔和拖尾。
+      3. sin/cos/random 均使用初始化阶段生成的查找表，帧内只做索引读取。
+      4. 碰撞检测只在中轴线附近通过空间网格查询，避免东方 100 * 西方 100 的全量距离计算。
+      5. 页面不可见时暂停 requestAnimationFrame，回到页面后继续。
+    */
+
+    const EAST_COUNT = 100;
+    const WEST_COUNT = 100;
+    const SPARK_COUNT = 50;
+    const CENTER_BAND = 100;
+    const COLLISION_DISTANCE = 30;
+    const COLLISION_DISTANCE_SQ = COLLISION_DISTANCE * COLLISION_DISTANCE;
+    const GRID_SIZE = 80;
+    const MOUSE_RADIUS = 150;
+    const MOUSE_RADIUS_SQ = MOUSE_RADIUS * MOUSE_RADIUS;
+    const TAU = Math.PI * 2;
+    const BG = "#0a0e1a";
+
+    const EAST_COLORS = ["#2c3e50", "#3a5f4f", "#b8860b"];
+    const WEST_COLORS = ["#c0c0c0", "#00bfff", "#4b0082"];
+
+    const canvas = document.getElementById("stage");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    const promptEl = document.getElementById("prompt");
+    const flashEl = document.getElementById("flash");
+    const fpsEl = document.getElementById("fps");
+
+    let width = 1;
+    let height = 1;
+    let dpr = 1;
+    let running = true;
+    let rafId = 0;
+    let frame = 0;
+    let lastTime = performance.now();
+    let fpsTime = lastTime;
+    let fpsFrames = 0;
+
+    /*
+      简单可复现的随机数生成器。
+      Math.random 只在初始化阶段间接使用也可以，但这里采用固定种子，
+      让视觉分布在每次刷新时更加稳定，便于调试与美术微调。
+    */
+    function seededRandomFactory(seed) {
+      let value = seed >>> 0;
+      return function rand() {
+        value = (value * 1664525 + 1013904223) >>> 0;
+        return value / 4294967296;
+      };
+    }
+
+    const rand = seededRandomFactory(20260709);
+
+    /*
+      预计算波形表：
+      东方水墨流动、透明度呼吸、闪烁节奏都从表中取值。
+      帧内不调用 sin/cos/random，可减少大量小函数调用成本。
+    */
+    const LUT_SIZE = 4096;
+    const sinLut = new Float32Array(LUT_SIZE);
+    const cosLut = new Float32Array(LUT_SIZE);
+    const noiseLut = new Float32Array(LUT_SIZE);
+    const randomLut = new Float32Array(LUT_SIZE);
+
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const angle = (i / LUT_SIZE) * TAU;
+      sinLut[i] = Math.sin(angle);
+      cosLut[i] = Math.cos(angle);
+      randomLut[i] = rand();
+    }
+
+    /*
+      简化噪声表：
+      多个正弦层叠加，得到类似水墨晕染的缓慢偏移。
+      它不是完整 Perlin Noise，但视觉上具备连续、低频、非机械的流动感。
+    */
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const a = (i / LUT_SIZE) * TAU;
+      noiseLut[i] = (
+        Math.sin(a * 1.0 + 0.2) * 0.52 +
+        Math.sin(a * 2.3 + 1.7) * 0.31 +
+        Math.sin(a * 4.9 + 2.6) * 0.17
+      );
+    }
+
+    function lutIndex(value) {
+      return Math.abs(value | 0) & (LUT_SIZE - 1);
+    }
+
+    function clamp01(value) {
+      return value < 0 ? 0 : value > 1 ? 1 : value;
+    }
+
+    function easeInQuad(t) {
+      return t * t;
+    }
+
+    /*
+      Particle 是对象池中的基础粒子结构。
+      active 用于区分火花是否可绘制；主粒子始终 active。
+      collapseX/Y 记录转场开始位置，转场过程中不重新分配任何临时对象。
+    */
+    class Particle {
+      constructor() {
+        this.x = 0;
+        this.y = 0;
+        this.vx = 0;
+        this.vy = 0;
+        this.baseVx = 0;
+        this.baseVy = 0;
+        this.radius = 2;
+        this.color = "#ffffff";
+        this.opacity = 1;
+        this.baseOpacity = 1;
+        this.phase = 0;
+        this.phase2 = 0;
+        this.shape = 0;
+        this.life = 0;
+        this.maxLife = 20;
+        this.active = true;
+        this.collapseX = 0;
+        this.collapseY = 0;
+      }
+    }
+
+    class EasternField {
+      constructor(count) {
+        this.count = count;
+        this.particles = new Array(count);
+        for (let i = 0; i < count; i++) {
+          const p = new Particle();
+          p.radius = 2 + rand() * 2;
+          p.color = EAST_COLORS[(rand() * EAST_COLORS.length) | 0];
+          p.baseOpacity = 0.4 + rand() * 0.3;
+          p.phase = (rand() * LUT_SIZE) | 0;
+          p.phase2 = (rand() * LUT_SIZE) | 0;
+          p.baseVx = (0.2 + rand() * 0.3) * (rand() > 0.5 ? 1 : -1);
+          p.baseVy = (0.2 + rand() * 0.3) * (rand() > 0.5 ? 1 : -1);
+          this.particles[i] = p;
+        }
+      }
+
+      resetBounds() {
+        for (let i = 0; i < this.count; i++) {
+          const p = this.particles[i];
+          p.x = rand() * width * 0.48;
+          p.y = rand() * height;
+          p.vx = p.baseVx;
+          p.vy = p.baseVy;
+        }
+      }
+
+      update(mouse, forceAmount) {
+        for (let i = 0; i < this.count; i++) {
+          const p = this.particles[i];
+
+          /*
+            水墨流动：
+            使用两个相位不同的连续噪声通道给速度加细微偏航。
+            速度保持在 0.2-0.5 px/frame 附近，形成极慢的“晕开”。
+          */
+          const n1 = noiseLut[lutIndex(frame + p.phase)];
+          const n2 = noiseLut[lutIndex(frame * 0.7 + p.phase2)];
+          let vx = p.baseVx * 0.55 + n1 * 0.22;
+          let vy = p.baseVy * 0.55 + n2 * 0.22;
+
+          /*
+            鼠标力场：
+            东方粒子在 150px 范围内被轻微排斥。
+            forceAmount 会在鼠标静止 3 秒后平滑降为 0，力场自然消退。
+          */
+          if (forceAmount > 0.001) {
+            const dx = p.x - mouse.x;
+            const dy = p.y - mouse.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq > 0.01 && distSq < MOUSE_RADIUS_SQ) {
+              const falloff = (1 - distSq / MOUSE_RADIUS_SQ) * forceAmount;
+              const invDist = 1 / Math.sqrt(distSq);
+              vx += dx * invDist * falloff * 1.2;
+              vy += dy * invDist * falloff * 1.2;
+            }
+          }
+
+          p.x += vx;
+          p.y += vy;
+
+          if (p.x < -20) p.x = width * 0.5 + 20;
+          if (p.x > width * 0.5 + 28) p.x = -10;
+          if (p.y < -20) p.y = height + 20;
+          if (p.y > height + 20) p.y = -20;
+
+          const breath = sinLut[lutIndex(frame * 2 + p.phase)];
+          p.opacity = p.baseOpacity + breath * 0.08;
+        }
+      }
+
+      draw(context) {
+        context.save();
+        context.shadowBlur = 8;
+        for (let i = 0; i < this.count; i++) {
+          const p = this.particles[i];
+          context.globalAlpha = clamp01(p.opacity);
+          context.shadowColor = p.color;
+          context.fillStyle = p.color;
+          context.beginPath();
+          context.arc(p.x, p.y, p.radius, 0, TAU);
+          context.fill();
+        }
+        context.restore();
+      }
+    }
+
+    class WesternField {
+      constructor(count) {
+        this.count = count;
+        this.particles = new Array(count);
+        for (let i = 0; i < count; i++) {
+          const p = new Particle();
+          p.radius = 1.5 + rand() * 1.5;
+          p.color = WEST_COLORS[(rand() * WEST_COLORS.length) | 0];
+          p.baseOpacity = 0.45 + rand() * 0.35;
+          p.phase = (rand() * LUT_SIZE) | 0;
+          p.shape = rand() > 0.5 ? 1 : 2;
+          p.baseVx = (0.3 + rand() * 0.3) * (rand() > 0.5 ? 1 : -1);
+          p.baseVy = (0.3 + rand() * 0.3) * (rand() > 0.5 ? 1 : -1);
+          this.particles[i] = p;
+        }
+      }
+
+      resetBounds() {
+        for (let i = 0; i < this.count; i++) {
+          const p = this.particles[i];
+          p.x = width * 0.52 + rand() * width * 0.48;
+          p.y = rand() * height;
+          p.vx = p.baseVx;
+          p.vy = p.baseVy;
+        }
+      }
+
+      update(mouse, forceAmount) {
+        for (let i = 0; i < this.count; i++) {
+          const p = this.particles[i];
+          let vx = p.baseVx;
+          let vy = p.baseVy;
+
+          /*
+            西方几何粒子保持直线运动。
+            鼠标靠近时被轻微吸引，星座网格随之发生局部扭曲。
+          */
+          if (forceAmount > 0.001) {
+            const dx = mouse.x - p.x;
+            const dy = mouse.y - p.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq > 0.01 && distSq < MOUSE_RADIUS_SQ) {
+              const falloff = (1 - distSq / MOUSE_RADIUS_SQ) * forceAmount;
+              const invDist = 1 / Math.sqrt(distSq);
+              vx += dx * invDist * falloff * 1.05;
+              vy += dy * invDist * falloff * 1.05;
+            }
+          }
+
+          p.x += vx;
+          p.y += vy;
+
+          if (p.x < width * 0.5 - 28) p.x = width + 20;
+          if (p.x > width + 20) p.x = width * 0.5 - 18;
+          if (p.y < -20) p.y = height + 20;
+          if (p.y > height + 20) p.y = -20;
+
+          /*
+            闪烁通过随机表制造突变感，不在帧内调用 random。
+            每个粒子相位不同，因此不会同步闪。
+          */
+          const flickerSeed = randomLut[lutIndex((frame >> 2) + p.phase)];
+          p.opacity = flickerSeed > 0.955 ? 1 : p.baseOpacity;
+        }
+      }
+
+      drawConnections(context) {
+        context.save();
+        context.lineWidth = 1;
+        context.strokeStyle = "rgba(0,191,255,0.15)";
+        context.beginPath();
+
+        /*
+          右侧粒子数量固定 100，连线视觉是主体效果。
+          这里保留 100 粒子内的距离判断，规模稳定且低成本；
+          真正容易扩大的跨阵营碰撞检测则交给空间网格。
+        */
+        for (let i = 0; i < this.count; i++) {
+          const a = this.particles[i];
+          for (let j = i + 1; j < this.count; j++) {
+            const b = this.particles[j];
+            const dx = a.x - b.x;
+            const dy = a.y - b.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < GRID_SIZE * GRID_SIZE) {
+              context.moveTo(a.x, a.y);
+              context.lineTo(b.x, b.y);
+            }
+          }
+        }
+        context.stroke();
+        context.restore();
+      }
+
+      drawParticles(context) {
+        context.save();
+        for (let i = 0; i < this.count; i++) {
+          const p = this.particles[i];
+          context.globalAlpha = clamp01(p.opacity);
+          context.fillStyle = p.color;
+
+          if (p.shape === 1) {
+            context.fillRect(p.x - p.radius, p.y - p.radius, p.radius * 2, p.radius * 2);
+          } else {
+            context.beginPath();
+            context.moveTo(p.x, p.y - p.radius * 1.4);
+            context.lineTo(p.x + p.radius * 1.25, p.y + p.radius);
+            context.lineTo(p.x - p.radius * 1.25, p.y + p.radius);
+            context.closePath();
+            context.fill();
+          }
+        }
+        context.restore();
+      }
+
+      draw(context) {
+        this.drawConnections(context);
+        this.drawParticles(context);
+      }
+    }
+
+    class SparkPool {
+      constructor(count) {
+        this.count = count;
+        this.pool = new Array(count);
+        this.cursor = 0;
+        for (let i = 0; i < count; i++) {
+          const p = new Particle();
+          p.active = false;
+          p.radius = 1 + rand();
+          p.color = "#ffffff";
+          p.maxLife = 20;
+          this.pool[i] = p;
+        }
+      }
+
+      spawn(x, y, boost) {
+        /*
+          对象池复用：
+          cursor 环形前进，满池后覆盖最老火花。
+          因为火花寿命只有 20 帧，同时最多严格保持 50 个对象。
+        */
+        const p = this.pool[this.cursor];
+        this.cursor = (this.cursor + 1) % this.count;
+        p.active = true;
+        p.x = x;
+        p.y = y;
+        p.collapseX = x;
+        p.collapseY = y;
+        p.radius = 1 + randomLut[lutIndex(frame + this.cursor)] * 1;
+        p.life = boost ? 4 : 0;
+        p.maxLife = 20;
+        p.opacity = 1;
+      }
+
+      update() {
+        for (let i = 0; i < this.count; i++) {
+          const p = this.pool[i];
+          if (!p.active) continue;
+          p.life++;
+          p.opacity = 1 - p.life / p.maxLife;
+          if (p.life >= p.maxLife) {
+            p.active = false;
+            p.opacity = 0;
+          }
+        }
+      }
+
+      draw(context) {
+        context.save();
+        context.shadowBlur = 10;
+        context.shadowColor = "#ffffff";
+        context.fillStyle = "#ffffff";
+        for (let i = 0; i < this.count; i++) {
+          const p = this.pool[i];
+          if (!p.active) continue;
+          context.globalAlpha = clamp01(p.opacity);
+          context.beginPath();
+          context.arc(p.x, p.y, p.radius, 0, TAU);
+          context.fill();
+        }
+        context.restore();
+      }
+    }
+
+    class SpatialGrid {
+      constructor(maxParticles) {
+        this.maxParticles = maxParticles;
+        this.cols = 1;
+        this.rows = 1;
+        this.cells = [];
+      }
+
+      resize() {
+        this.cols = Math.ceil(width / GRID_SIZE);
+        this.rows = Math.ceil(height / GRID_SIZE);
+        const total = this.cols * this.rows;
+        this.cells.length = total;
+        for (let i = 0; i < total; i++) {
+          if (!this.cells[i]) this.cells[i] = [];
+        }
+      }
+
+      clear() {
+        for (let i = 0; i < this.cells.length; i++) {
+          this.cells[i].length = 0;
+        }
+      }
+
+      add(particle) {
+        const col = Math.max(0, Math.min(this.cols - 1, (particle.x / GRID_SIZE) | 0));
+        const row = Math.max(0, Math.min(this.rows - 1, (particle.y / GRID_SIZE) | 0));
+        this.cells[row * this.cols + col].push(particle);
+      }
+
+      emitCollisionsFor(eastParticle, sparkPool, boosted) {
+        const col = (eastParticle.x / GRID_SIZE) | 0;
+        const row = (eastParticle.y / GRID_SIZE) | 0;
+        for (let yy = row - 1; yy <= row + 1; yy++) {
+          if (yy < 0 || yy >= this.rows) continue;
+          for (let xx = col - 1; xx <= col + 1; xx++) {
+            if (xx < 0 || xx >= this.cols) continue;
+            const cell = this.cells[yy * this.cols + xx];
+            for (let i = 0; i < cell.length; i++) {
+              const westParticle = cell[i];
+              const dx = eastParticle.x - westParticle.x;
+              const dy = eastParticle.y - westParticle.y;
+              if (dx * dx + dy * dy < COLLISION_DISTANCE_SQ) {
+                sparkPool.spawn(
+                  (eastParticle.x + westParticle.x) * 0.5,
+                  (eastParticle.y + westParticle.y) * 0.5,
+                  boosted
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    class TransitionManager {
+      constructor() {
+        this.active = false;
+        this.startTime = 0;
+        this.targetX = 0;
+        this.targetY = 0;
+      }
+
+      begin(x, y, eastern, western, sparks) {
+        if (this.active) return;
+        this.active = true;
+        this.startTime = performance.now();
+        this.targetX = x;
+        this.targetY = y;
+        promptEl.style.animation = "none";
+        promptEl.style.opacity = "0";
+
+        /*
+          坍缩起点缓存：
+          转场开始时记录每个粒子当前位置，之后使用 easeInQuad 插值到点击点。
+          这样所有粒子都像被同一个引力奇点吸入。
+        */
+        for (let i = 0; i < eastern.count; i++) {
+          eastern.particles[i].collapseX = eastern.particles[i].x;
+          eastern.particles[i].collapseY = eastern.particles[i].y;
+        }
+        for (let i = 0; i < western.count; i++) {
+          western.particles[i].collapseX = western.particles[i].x;
+          western.particles[i].collapseY = western.particles[i].y;
+        }
+        for (let i = 0; i < sparks.count; i++) {
+          const p = sparks.pool[i];
+          p.collapseX = p.x;
+          p.collapseY = p.y;
+          if (p.active) p.opacity = Math.max(p.opacity, 0.35);
+        }
+      }
+
+      update(now, eastern, western, sparks) {
+        if (!this.active) return false;
+
+        const elapsed = now - this.startTime;
+
+        if (elapsed <= 800) {
+          const t = easeInQuad(elapsed / 800);
+          this.collapseParticles(eastern.particles, eastern.count, t);
+          this.collapseParticles(western.particles, western.count, t);
+          this.collapseParticles(sparks.pool, sparks.count, t);
+          flashEl.style.opacity = "0";
+        } else if (elapsed <= 1200) {
+          /*
+            白色闪光：
+            0.8-1.0s 变亮，1.0-1.2s 退亮。
+          */
+          const t = (elapsed - 800) / 400;
+          flashEl.style.opacity = String(t < 0.5 ? t * 2 : (1 - t) * 2);
+        } else if (elapsed <= 1800) {
+          flashEl.style.opacity = String(1 - (elapsed - 1200) / 600);
+        } else {
+          window.location.href = "chat.html";
+        }
+
+        return true;
+      }
+
+      collapseParticles(list, count, t) {
+        for (let i = 0; i < count; i++) {
+          const p = list[i];
+          if (p.active === false) continue;
+          p.x = p.collapseX + (this.targetX - p.collapseX) * t;
+          p.y = p.collapseY + (this.targetY - p.collapseY) * t;
+          p.opacity = Math.max(p.opacity, 0.25 + t * 0.75);
+        }
+      }
+    }
+
+    const eastern = new EasternField(EAST_COUNT);
+    const western = new WesternField(WEST_COUNT);
+    const sparks = new SparkPool(SPARK_COUNT);
+    const grid = new SpatialGrid(WEST_COUNT);
+    const transition = new TransitionManager();
+
+    const mouse = {
+      x: -9999,
+      y: -9999,
+      lastMove: -9999,
+      force: 0
+    };
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = Math.max(1, window.innerWidth);
+      height = Math.max(1, window.innerHeight);
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, width, height);
+      grid.resize();
+      eastern.resetBounds();
+      western.resetBounds();
+    }
+
+    function updateMouseForce(now) {
+      const idle = now - mouse.lastMove;
+      if (idle <= 3000) {
+        mouse.force += (1 - mouse.force) * 0.08;
+      } else {
+        mouse.force += (0 - mouse.force) * 0.035;
+      }
+    }
+
+    function updateCollisions(boosted) {
+      const centerX = width * 0.5;
+      const minX = centerX - CENTER_BAND;
+      const maxX = centerX + CENTER_BAND;
+      const spawnStep = boosted ? 1 : 3;
+
+      grid.clear();
+      for (let i = 0; i < western.count; i++) {
+        const p = western.particles[i];
+        if (p.x >= minX - COLLISION_DISTANCE && p.x <= maxX + COLLISION_DISTANCE) {
+          grid.add(p);
+        }
+      }
+
+      /*
+        中央碰撞区：
+        只检查中轴线 ±100px 附近的东方粒子，并在邻近网格中寻找西方粒子。
+        boosted 时生成频率约为平时 3 倍，对应鼠标移动后的能量扰动。
+      */
+      for (let i = 0; i < eastern.count; i++) {
+        const a = eastern.particles[i];
+        if (a.x < minX - COLLISION_DISTANCE || a.x > maxX + COLLISION_DISTANCE) continue;
+        if (((frame + i) % spawnStep) !== 0) continue;
+
+        grid.emitCollisionsFor(a, sparks, boosted);
+      }
+    }
+
+    function drawFrame(now) {
+      frame++;
+
+      /*
+        半透明覆盖代替 clearRect：
+        保留上一帧残影，东方水墨有晕染尾迹，西方星轨也更有空间深度。
+      */
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "rgba(10, 14, 26, 0.15)";
+      ctx.fillRect(0, 0, width, height);
+
+      const inTransition = transition.update(now, eastern, western, sparks);
+
+      if (!inTransition) {
+        updateMouseForce(now);
+        eastern.update(mouse, mouse.force);
+        western.update(mouse, mouse.force);
+        const boosted = mouse.force > 0.18 && now - mouse.lastMove < 3000;
+        updateCollisions(boosted);
+        sparks.update();
+      }
+
+      eastern.draw(ctx);
+      western.draw(ctx);
+      sparks.draw(ctx);
+
+      fpsFrames++;
+      if (now - fpsTime > 500) {
+        const fps = Math.round((fpsFrames * 1000) / (now - fpsTime));
+        fpsEl.textContent = "FPS " + fps;
+        fpsTime = now;
+        fpsFrames = 0;
+      }
+    }
+
+    function loop(now) {
+      if (!running) return;
+      drawFrame(now);
+      lastTime = now;
+      rafId = requestAnimationFrame(loop);
+    }
+
+    function handleMove(event) {
+      if (transition.active) return;
+      const source = event.touches && event.touches.length ? event.touches[0] : event;
+      mouse.x = source.clientX;
+      mouse.y = source.clientY;
+      mouse.lastMove = performance.now();
+    }
+
+    function handleClick(event) {
+      if (transition.active) return;
+      const source = event.changedTouches && event.changedTouches.length ? event.changedTouches[0] : event;
+      transition.begin(source.clientX, source.clientY, eastern, western, sparks);
+    }
+
+    window.addEventListener("resize", resize, { passive: true });
+    window.addEventListener("mousemove", handleMove, { passive: true });
+    window.addEventListener("touchmove", handleMove, { passive: false });
+    window.addEventListener("click", handleClick, { passive: true });
+    window.addEventListener("touchend", handleClick, { passive: true });
+
+    document.addEventListener("visibilitychange", function onVisibilityChange() {
+      running = !document.hidden;
+      if (running) {
+        lastTime = performance.now();
+        fpsTime = lastTime;
+        rafId = requestAnimationFrame(loop);
+      } else {
+        cancelAnimationFrame(rafId);
+      }
+    });
+
+    resize();
+    rafId = requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

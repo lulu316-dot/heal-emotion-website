@@ -1,0 +1,2021 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>跨时空情感疗愈</title>
+  <meta name="description" content="跨时空情感疗愈：与东西方哲人对话，在粒子生命树的生长中安放情绪，生成属于此刻的情绪卡片。">
+  <meta name="theme-color" content="#0a0e1a">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="跨时空情感疗愈">
+  <meta property="og:description" content="与东西方哲人对话，在粒子生命树的生长中安放情绪，生成属于此刻的情绪卡片。">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0e1a'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2387CEEB' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23d4af37'/%3E%3C/svg%3E">
+  <!--
+    本次优化说明：
+    首页转场动画实现原理：
+    - 点击后不创建新 DOM，所有“引力汇聚”和“隧道穿越”都在首页 Canvas 的 requestAnimationFrame 中按时间差计算。
+    - 0-0.6s 粒子使用 Lerp/easeInQuad 向点击点坍缩；0.6-1.0s 中心光洞向内放大填满屏幕；1.0s 后交给对话页景深浮现。
+    - 对话页入场只使用 transform: translate3d(...) scale()、filter: blur() 和 opacity，配合 will-change 走 GPU 合成，避免 top/left/width/height 引发重排。
+    - 转场期间 body 添加 home-transitioning，禁用滚动和指针事件，避免误触。
+
+    1. 首页重写为“东方水墨场 + 西方几何星空 + 中央碰撞火花”，增强东西方碰撞视觉冲击。
+    2. 对话页粒子树保持未初始化空状态，首条消息匹配导师后才初始化，并按 1-4 轮推进 0→25→55→85→100。
+    3. 疗愈师回复改为关键词智能模拟，根据用户输入生成更有针对性的短回复，保持哲学家风格差异。
+    4. 修复对话 4-5 轮后树消失：progress 在 setProgress/render 中双重 clamp 到 0-100，粒子树只在首条消息匹配后初始化一次，后续只 setProgress。
+    5. 粒子树增加固定对象池健康检查、每 60 帧调试日志、布朗运动 noiseX/noiseY 和双层圆发光；非结晶阶段禁用 shadowBlur。
+    6. 性能优化：对话页背景星点从 100 降到 50 并离屏缓存，树粒子对象池上限 300，关闭高成本阴影。
+    7. 粒子树升级为“骨架 + 树冠叶簇”：generateBranches 生成 4-5 层分叉，末端用 3-5 个叶粒子加密树冠。
+    8. 修复匹配机制：首页左右点击会持久化 camp，matchPhilosopher 按阵营严格匹配并输出得分日志。
+    9. 回复升级为模板组合式，减少连续对话重复；消息滚动条和气泡样式更融入深色背景。
+    10. 修复粒子形状重叠：树粒子只通过 drawParticle 单次绘制；重写 matchPhilosopher，西方阵营严格只在国外哲学家内匹配。
+    11. 首页左侧融合 taiji-spiral-home.html：旧东方粒子替换为 TaijiSystem（太极旋转 + 超密动态星尘螺旋），并用 rgba(10,14,26,.04) 极长拖尾制造浩瀚星云带。
+    12. 精准调参：左侧桌面约 2600 个 2.6-3.6px 动态粉尘星粒 + 桌面 24800/移动端 10400 离屏静态星尘；本次只优化动态星尘数量和颗粒感，其他保持不动。
+
+    使用说明
+    1. 如何测试：
+       - 双击 app.html 运行。
+       - 测试 1：首页点击左侧，输入“我很焦虑”，应匹配王阳明；连续发送 8 轮后树会结晶，可生成卡片。
+       - 测试 2：首页点击右侧，输入“讨好别人很累”，应匹配阿德勒；连续发送多轮，8 轮后结晶，48 轮仍稳定保留最近 20 条 DOM 消息。
+       - 测试 3：进入对话页后，在萌芽阶段直接点击“📷 保存此刻”，生成萌芽状态卡片。
+    2. 如何修改哲学家配置：
+       - 搜索“模块②：哲学家配置”，修改 Philosophy.configs / replies / card_quote_pool。
+    3. 如何调整性能参数：
+       - 搜索“PerfConfig”，可调整桌面/移动端粒子数、低 FPS 阈值、降级比例。
+  -->
+  <style>
+    @font-face {
+      font-family: "InterLocal";
+      src: local("Inter");
+      font-display: swap;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #0a0e1a;
+      color: #e2e8f0;
+      font-family: InterLocal, "Noto Serif SC", "Microsoft YaHei", sans-serif;
+      touch-action: manipulation;
+    }
+
+    * { box-sizing: border-box; }
+    button, input { font: inherit; }
+    canvas { will-change: transform; }
+
+    #app {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      background: #0a0e1a;
+    }
+
+    .page {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate3d(0, 8px, 0);
+      transition: opacity .32s ease, transform .32s ease;
+    }
+
+    .page.active {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate3d(0, 0, 0);
+    }
+
+    #homeCanvas,
+    #treeCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #0a0e1a;
+    }
+
+    .flash {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      opacity: 0;
+      pointer-events: none;
+      background: #fff;
+    }
+
+    @keyframes breath {
+      0%, 100% { opacity: .5; }
+      50% { opacity: .9; }
+    }
+
+    #chatPage {
+      display: grid;
+      grid-template-columns: 40% 60%;
+      height: 100vh;
+      max-height: 100vh;
+      min-height: 0;
+      overflow: hidden;
+      background: #0a0e1a;
+      will-change: transform, filter, opacity;
+      transform-origin: center center;
+    }
+
+    #chatPage.inner-enter {
+      opacity: 0;
+      transform: translate3d(0, 30px, 0) scale(.95);
+      filter: blur(8px);
+    }
+
+    #chatPage.inner-enter.active {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+      filter: blur(0);
+      transition: opacity .5s ease, transform .5s cubic-bezier(.16, 1, .3, 1), filter .5s ease;
+    }
+
+    body.home-transitioning {
+      overflow: hidden;
+      cursor: wait;
+    }
+
+    body.home-transitioning * {
+      pointer-events: none !important;
+    }
+
+    .treePane {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background: #0a0e1a;
+      border-right: 1px solid rgba(255,255,255,.05);
+    }
+
+    .chatPane {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      max-height: 100vh;
+      overflow: hidden;
+      background: #0a0e1a;
+      will-change: transform;
+    }
+
+    .mentorBar {
+      height: 80px;
+      flex: 0 0 80px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: max(14px, env(safe-area-inset-top)) 72px 14px 24px;
+      border-bottom: 1px solid rgba(255,255,255,.05);
+      transition: opacity .3s ease;
+    }
+
+    .mentorBar.fade { opacity: 0; }
+    .avatar {
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #0f172a;
+      font-weight: 800;
+      box-shadow: 0 0 24px rgba(255,255,255,.15);
+    }
+
+    .mentorName { color: #fff; font-size: 16px; line-height: 1.3; }
+    .mentorSlogan {
+      margin-top: 4px;
+      color: rgba(226,232,240,.62);
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: min(48vw, 520px);
+    }
+
+    .dots { display: inline-flex; gap: 6px; margin-left: 8px; }
+    .dots i {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: rgba(255,255,255,.72);
+      animation: dot 1s ease-in-out infinite;
+    }
+    .dots i:nth-child(2) { animation-delay: .16s; }
+    .dots i:nth-child(3) { animation-delay: .32s; }
+    @keyframes dot {
+      0%,100% { opacity: .25; transform: translateY(0); }
+      50% { opacity: 1; transform: translateY(-2px); }
+    }
+
+    .messages {
+      position: relative;
+      contain: layout style paint;
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: 100%;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      will-change: transform;
+      padding: 24px clamp(18px, 4vw, 56px);
+      scroll-behavior: auto;
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%);
+      mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%);
+    }
+
+    .messages::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .messages::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.3);
+      border-radius: 3px;
+    }
+
+    .messages::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+
+    .messages::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .message {
+      display: flex;
+      margin-bottom: 16px;
+      opacity: 0;
+      transform: translate3d(0, 6px, 0);
+      animation: rise .2s ease forwards;
+    }
+    @keyframes rise { to { opacity: 1; transform: translate3d(0,0,0); } }
+    .message.user { justify-content: flex-end; }
+    .bubble { max-width: 70%; overflow-wrap: anywhere; }
+    .message.user .bubble {
+      padding: 11px 16px;
+      border-radius: 16px;
+      background: rgba(30, 58, 138, 0.6);
+      color: #fff;
+      font: 15px/1.7 "Microsoft YaHei", sans-serif;
+      backdrop-filter: blur(4px);
+    }
+    .message.ai .bubble {
+      color: rgba(226, 232, 240, 0.9);
+      font: 16px/1.8 "Noto Serif SC", "Songti SC", serif;
+      text-shadow: 0 0 20px rgba(255,255,255,.08);
+      backdrop-filter: blur(4px);
+    }
+
+    .inputArea {
+      height: 80px;
+      flex: 0 0 80px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 24px max(16px, env(safe-area-inset-bottom));
+      border-top: 1px solid rgba(255,255,255,.05);
+    }
+    .inputWrap {
+      flex: 1;
+      height: 48px;
+      border: 1px solid rgba(255,255,255,.06);
+      border-radius: 24px;
+      background: rgba(255,255,255,.05);
+      backdrop-filter: blur(14px);
+      transition: border-color .2s ease, box-shadow .2s ease;
+    }
+    .inputWrap.focused {
+      border-color: var(--mentor-color, #87CEEB);
+      box-shadow: 0 0 18px var(--mentor-glow, rgba(135,206,235,.38));
+    }
+    #userInput {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      outline: 0;
+      padding: 0 18px;
+      background: transparent;
+      color: rgba(255,255,255,.92);
+      font-size: 16px;
+    }
+    #userInput::placeholder { color: rgba(255,255,255,.4); }
+
+    .roundBtn {
+      width: 48px;
+      height: 48px;
+      border: 0;
+      border-radius: 50%;
+      color: #fff;
+      background: rgba(255,255,255,.08);
+      backdrop-filter: blur(14px);
+      cursor: pointer;
+      transition: opacity .18s ease, transform .18s ease, background .18s ease;
+    }
+    .roundBtn:hover { transform: translateY(-1px); background: rgba(255,255,255,.14); }
+    #sendBtn { flex: 0 0 48px; font-size: 24px; line-height: 1; }
+    #saveBtn, #homeBtn {
+      position: fixed;
+      top: max(16px, env(safe-area-inset-top));
+      z-index: 20;
+    }
+    #saveBtn { right: 16px; font-size: 21px; }
+    #homeBtn { right: 72px; opacity: .3; font-size: 18px; }
+    #homeBtn:hover { opacity: .8; }
+
+    #fps {
+      position: fixed;
+      right: 12px;
+      bottom: max(10px, env(safe-area-inset-bottom));
+      z-index: 40;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: rgba(255,255,255,.5);
+      font: 12px/1.4 Consolas, Monaco, monospace;
+      cursor: pointer;
+    }
+    #fps.hidden { opacity: 0; }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: max(28px, env(safe-area-inset-bottom));
+      z-index: 60;
+      padding: 9px 14px;
+      border-radius: 18px;
+      background: rgba(15,23,42,.82);
+      color: #fff;
+      opacity: 0;
+      transform: translate3d(-50%, 10px, 0);
+      transition: opacity .2s ease, transform .2s ease;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translate3d(-50%, 0, 0); }
+
+    .cardModal {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      place-items: center;
+      padding: 18px;
+      background: rgba(2,6,23,.68);
+      backdrop-filter: blur(10px);
+      touch-action: none;
+    }
+    .cardModal.show { display: grid; }
+    .previewBox {
+      display: grid;
+      gap: 14px;
+      justify-items: center;
+      opacity: 0;
+      transform: translate3d(0,14px,0) scale(.98);
+      transition: opacity .22s ease, transform .22s ease;
+    }
+    .cardModal.show .previewBox { opacity: 1; transform: translate3d(0,0,0) scale(1); }
+    #cardPreview {
+      width: min(390px, 88vw);
+      max-height: min(680px, 78vh);
+      height: auto;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 28px 90px rgba(0,0,0,.44);
+      background: #0f172a;
+      transform-origin: center center;
+    }
+    .modalActions {
+      display: flex;
+      width: min(390px, 88vw);
+      gap: 10px;
+    }
+    .modalActions button {
+      flex: 1;
+      height: 40px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 20px;
+      color: #fff;
+      background: rgba(255,255,255,.08);
+      backdrop-filter: blur(10px);
+      cursor: pointer;
+    }
+
+    .noCanvas {
+      position: fixed;
+      inset: 0;
+      z-index: 99;
+      display: none;
+      place-items: center;
+      background: #0f172a;
+      color: #fff;
+      padding: 24px;
+      text-align: center;
+      font-size: 18px;
+    }
+
+    @media (min-width: 768px) and (max-width: 1024px) {
+      #chatPage { grid-template-columns: 35% 65%; }
+      .mentorSlogan { max-width: 44vw; }
+    }
+
+    @media (max-width: 767px) {
+      #chatPage { grid-template-columns: 1fr; grid-template-rows: 40vh 60vh; }
+      .treePane { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+      .mentorBar { height: 70px; flex-basis: 70px; padding: 12px 118px 12px 16px; }
+      .messages { padding: 16px; }
+      .bubble { max-width: 84%; }
+      .inputArea {
+        height: auto;
+        min-height: 76px;
+        padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+      }
+      #saveBtn { right: 14px; top: max(12px, env(safe-area-inset-top)); }
+      #homeBtn { right: 68px; top: max(12px, env(safe-area-inset-top)); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="noCanvas" class="noCanvas">您的浏览器不支持 Canvas，请升级浏览器</div>
+  <main id="app">
+    <section id="homePage" class="page active">
+      <canvas id="homeCanvas" aria-hidden="true"></canvas>
+    </section>
+    <section id="chatPage" class="page">
+      <div class="treePane"><canvas id="treeCanvas" aria-hidden="true"></canvas></div>
+      <div class="chatPane">
+        <header id="mentorBar" class="mentorBar"></header>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <footer class="inputArea">
+          <div id="inputWrap" class="inputWrap"><input id="userInput" autocomplete="off" aria-label="写下你的心声" placeholder="写下你的心声..."></div>
+          <button id="sendBtn" class="roundBtn" type="button" aria-label="发送">→</button>
+        </footer>
+      </div>
+    </section>
+  </main>
+  <button id="homeBtn" class="roundBtn" type="button" title="返回首页" aria-label="返回首页">🏠</button>
+  <button id="saveBtn" class="roundBtn" type="button" title="保存此刻" aria-label="保存此刻">📷</button>
+  <div id="flash" class="flash"></div>
+  <button id="fps" type="button" aria-label="切换帧率显示">FPS 60</button>
+  <div id="toast" class="toast"></div>
+  <div id="cardModal" class="cardModal" aria-hidden="true">
+    <div class="previewBox">
+      <img id="cardPreview" alt="情绪卡片预览" loading="lazy">
+      <div class="modalActions">
+        <button id="downloadBtn" type="button">保存到本地</button>
+        <button id="continueBtn" type="button">继续对话</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="api-config.js"></script>
+  <script>
+    "use strict";
+
+    /* 调试开关：默认关闭。需要排查时在 URL 加 ?debug 或运行 localStorage.setItem("healingDebug","1")。 */
+    const DEBUG = (() => {
+      try {
+        if (/[?&]debug\b/.test(location.search)) return true;
+        return localStorage.getItem("healingDebug") === "1";
+      } catch (e) { return false; }
+    })();
+    const Log = {
+      log: DEBUG ? console.log.bind(console) : function(){},
+      info: DEBUG ? console.info.bind(console) : function(){},
+      warn: DEBUG ? console.warn.bind(console) : function(){},
+      table: DEBUG ? console.table.bind(console) : function(){},
+      group: DEBUG ? console.group.bind(console) : function(){},
+      groupEnd: DEBUG ? console.groupEnd.bind(console) : function(){},
+      error: console.error.bind(console)
+    };
+
+    /* ═══════ 模块⑥：全局整合 ═══════ */
+    const AppState = {
+      currentPage: "home",
+      currentPhilosopher: null,
+      growthProgress: 0,
+      conversationHistory: [],
+      camp: "eastern"
+    };
+
+    const PerfConfig = {
+      homeParticlesDesktop: 200,
+      treeParticlesDesktop: 300,
+      mobileParticles: 100,
+      lowFpsThreshold: 50,
+      lowFpsDuration: 5000,
+      degradeRatio: 0.7,
+      isMobile: matchMedia("(max-width: 767px)").matches,
+      reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches
+    };
+
+    const EventHub = {
+      map: new WeakMap(),
+      on(target, type, handler, options) {
+        target.addEventListener(type, handler, options);
+        let list = this.map.get(target);
+        if (!list) {
+          list = [];
+          this.map.set(target, list);
+        }
+        list.push({ type, handler, options });
+      },
+      offAll(target) {
+        const list = this.map.get(target);
+        if (!list) return;
+        for (let i = 0; i < list.length; i++) {
+          target.removeEventListener(list[i].type, list[i].handler, list[i].options);
+        }
+        this.map.delete(target);
+      }
+    };
+
+    const Dom = {};
+    function $(id) { return document.getElementById(id); }
+    function clamp(v, min, max) { return v < min ? min : v > max ? max : v; }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function easeInQuad(t) { return t * t; }
+    function easeOutCubic(t) { const n = 1 - t; return 1 - n * n * n; }
+    function hexToRgba(hex, alpha) {
+      const n = parseInt(hex.slice(1), 16);
+      return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")";
+    }
+    function showToast(text) {
+      Dom.toast.textContent = text;
+      Dom.toast.classList.add("show");
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => Dom.toast.classList.remove("show"), 1800);
+    }
+
+    const LUT_SIZE = 4096;
+    const LUT_MASK = LUT_SIZE - 1;
+    const TAU = Math.PI * 2;
+    const sinLut = new Float32Array(LUT_SIZE);
+    const cosLut = new Float32Array(LUT_SIZE);
+    const randomLut = new Float32Array(LUT_SIZE);
+    const noiseLut = new Float32Array(LUT_SIZE);
+    let seed = 20260709;
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const a = i / LUT_SIZE * TAU;
+      sinLut[i] = Math.sin(a);
+      cosLut[i] = Math.cos(a);
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      randomLut[i] = seed / 4294967296;
+      noiseLut[i] = Math.sin(a) * .5 + Math.sin(a * 2.7 + 1.8) * .32 + Math.sin(a * 5.1 + 2.4) * .18;
+    }
+    function lut(v) { return (v | 0) & LUT_MASK; }
+
+    class PerformanceMonitor {
+      constructor(node) {
+        this.node = node;
+        this.frames = 0;
+        this.last = performance.now();
+        this.lowStart = 0;
+        this.fps = 60;
+        this.visible = true;
+        EventHub.on(node, "click", () => {
+          this.visible = !this.visible;
+          node.classList.toggle("hidden", !this.visible);
+        });
+      }
+      tick(now) {
+        this.frames++;
+        if (now - this.last >= 500) {
+          this.fps = Math.round(this.frames * 1000 / (now - this.last));
+          this.node.textContent = "FPS " + this.fps;
+          if (this.fps < PerfConfig.lowFpsThreshold) {
+            if (App.home && App.home.startedAt && now - App.home.startedAt < 30000) {
+              this.lowStart = 0;
+              this.frames = 0;
+              this.last = now;
+              return;
+            }
+            if (!this.lowStart) this.lowStart = now;
+            if (now - this.lowStart > PerfConfig.lowFpsDuration) {
+              App.degradeParticles();
+              this.lowStart = now + 999999;
+            }
+          } else {
+            this.lowStart = 0;
+          }
+          this.frames = 0;
+          this.last = now;
+        }
+      }
+    }
+
+    /* ═══════ 模块②：哲学家配置 ═══════ */
+    const Philosophy = (() => {
+      const configs = [
+        { id:"wangYangming", name:"王阳明", camp:"eastern", initial:"阳", color:"#87CEEB", secondary:"#ffffff", trajectory:"straight", bloom:"breath", slogan:"心上用功，事上见真章。", tags:["焦虑","工作做不完","内耗","拖延","迷茫","想太多","行动困难"], card_quote_pool:["知是行之始，行是知之成。","人须在事上磨，方立得住。","此心光明，亦复何言。"] },
+        { id:"zhuangzi", name:"庄子", camp:"eastern", initial:"庄", color:"#2F4F4F", secondary:"#8fbc8f", trajectory:"fluid", bloom:"butterfly", slogan:"天地很大，别把自己困成一只杯。", tags:["同辈压力","容貌焦虑","内卷","比较","求而不得"], card_quote_pool:["天地与我并生，万物与我为一。","相濡以沫，不如相忘于江湖。","独与天地精神往来。"] },
+        { id:"sushi", name:"苏轼", camp:"eastern", initial:"苏", color:"#FFA500", secondary:"#ff6347", trajectory:"curve", bloom:"petal", slogan:"风雨来时，也可煮茶。", tags:["失恋","低谷","不公","熬不下去","挫折"], card_quote_pool:["一蓑烟雨任平生。","此心安处是吾乡。","人间有味是清欢。"] },
+        { id:"laozi", name:"老子", camp:"eastern", initial:"老", color:"#006994", secondary:"#87ceeb", trajectory:"spiral", bloom:"yinyang", slogan:"少一点用力，多一点顺势。", tags:["控制欲","恐慌未来","争强好胜","失控"], card_quote_pool:["上善若水，水善利万物而不争。","知足不辱，知止不殆。","夫唯不争，故天下莫能与之争。"] },
+        { id:"kongmeng", name:"孔孟", camp:"eastern", initial:"儒", color:"#8B4513", secondary:"#daa520", trajectory:"pyramid", bloom:"canopy", slogan:"立身有道，处世有仁。", tags:["职场委屈","人际纠葛","道德困境","被误解"], card_quote_pool:["己所不欲，勿施于人。","君子和而不同。","穷则独善其身，达则兼济天下。"] },
+        { id:"aurelius", name:"马可·奥勒留", camp:"western", initial:"奥", color:"#F0F8FF", secondary:"#c0c0c0", trajectory:"stack", bloom:"stillness", slogan:"控制你能控制的，其余归于宇宙。", tags:["情绪失控","愤怒","不可控焦虑","焦虑","压力","控制不了","担心","冲动"], card_quote_pool:["你拥有支配心灵的力量。","只关注你能控制之事。","宁静来自判断，而非环境。"] },
+        { id:"nietzsche", name:"尼采", camp:"western", initial:"尼", color:"#8B0000", secondary:"#ffd700", trajectory:"lightning", bloom:"explosion", slogan:"把深渊锻成阶梯。", tags:["虚无主义","抑郁","重大打击","软弱","绝望","想放弃","无力","崩溃"], card_quote_pool:["那些杀不死我的，使我更强大。","成为你自己。","重估一切价值。"] },
+        { id:"camus", name:"加缪", camp:"western", initial:"加", color:"#EDC9AF", secondary:"#8b7355", trajectory:"sway", bloom:"boulder", slogan:"看清荒诞，然后继续生活。", tags:["生活没意思","每天重复","重复","无意义","没意义","荒诞","荒诞感","虚无","麻木"], card_quote_pool:["在隆冬，我终于知道，我身上有一个不可战胜的夏天。","反抗，故我们存在。","人必须想象西西弗斯是幸福的。"] },
+        { id:"schopenhauer", name:"叔本华", camp:"western", initial:"叔", color:"#4B0082", secondary:"#9370db", trajectory:"pendulum", bloom:"mist", slogan:"看破欲望，痛苦便少一半。", tags:["欲望痛苦","痛苦","欲望","物质焦虑","嫉妒","无聊","空虚"], card_quote_pool:["人生是在痛苦和无聊之间摇摆。","欲望是痛苦的根。","减少欲望，便减少枷锁。"] },
+        { id:"adler", name:"阿德勒", camp:"western", initial:"阿", color:"#00BFFF", secondary:"#ffffff", trajectory:"network", bloom:"crystal", slogan:"你不必被别人的期待定义。", tags:["讨好","讨好别人","害怕被讨厌","别人怎么看我","很累","社恐","被绑架","怕被讨厌","不敢拒绝"], card_quote_pool:["一切烦恼皆源于人际关系。","自由就是被别人讨厌的勇气。","课题分离，是温柔的边界。"] }
+      ];
+      const replies = {
+        wangYangming:["我知道你被事压住了。先做眼前一小步，心就会亮一点。知行合一，行处即是心安。","你不是无能，只是心被万念缠住了。取一件最小的事去做。人须在事上磨。","焦虑多半来自未行动的念头。把今日能做的列一件，立刻落下。此心光明，亦复何言。","别急着责备自己。心定下来，手先动起来。知是行之始，行是知之成。","你已经看见困局了，这就是起点。少想十步，先行一步。破心中贼，正在此刻。"],
+        zhuangzi:["你被他人的尺子量疼了。鱼不必学鸟飞，云也不必排队。相忘于江湖，自有逍遥。","这世上本多喧闹，别把它全搬进心里。天地与我并生，万物与我为一。","求不得时，先松开手看看。手空了，风才进得来。独与天地精神往来。","他们跑他们的，你游你的。大鹏不与小雀争枝。至人无己，神人无功。","美丑得失，常是人间小梦。醒一醒，杯中也有大江湖。物我两忘，心自轻。"],
+        sushi:["这阵子真难熬，先别逞强。吃点热的，睡一觉，明日再看风雨。一蓑烟雨任平生。","失去很痛，我懂。可月亮不因一夜阴云就消失。此心安处是吾乡。","不公让人心冷，但你还可以把日子过热。人间有味是清欢。","先允许自己狼狈。东坡也曾被风雨打湿。回首萧瑟处，也无风雨也无晴。","你不是走到尽头，只是行到坡上。慢慢来，茶会热，天会亮。人生如逆旅。"],
+        laozi:["你抓得太紧，所以心很累。先松一寸，水自会找到路。上善若水，利万物而不争。","未来未至，不必先替它受苦。静下来，躁气会自己沉底。知止不殆。","争强久了，人会忘记为何出发。退一步，不是败，是归根。夫唯不争，故无尤。","控制不了的，就交还天地。你只守住呼吸与当下。反者道之动。","别急着把一切弄明白。混沌中也有路。道常无为，而无不为。"],
+        kongmeng:["这份委屈确实压心。先守住分寸，再辨明是非。君子和而不同。","人际纠葛最耗气。你可仁厚，但不必无边界。己所不欲，勿施于人。","道德困境难在两边都有重量。先问何者合义。义之所在，虽千万人吾往矣。","被误解时，先不乱其心。日久见其行。人不知而不愠，不亦君子乎。","责任重，心更要正。能做的尽力，不能做的不愧。君子坦荡荡。"],
+        aurelius:["你的怒意很强，但它不必做你的主人。先分清可控与不可控。宁静来自判断。","失控感会逼人反击。停一息，把权力交还理性。你拥有支配心灵的力量。","外界混乱，不等于你必须混乱。守住行动，放下结果。只关注你能控制之事。","愤怒像火，先烧持火者。把它转为纪律。阻碍行动的，反而推进行动。","此刻不需要胜过世界，只需胜过冲动。按自然生活，便是按理性生活。"],
+        nietzsche:["你痛得很深，但别急着跪下。把这击打炼成力量。杀不死你的，使你更强大。","虚无不是终点，是旧价值塌了。站起来，重估一切价值。","别把软弱装成命运。你仍可命令自己。成为你自己。","深渊逼近时，眼睛别躲。凝视它，然后跨过去。人是通向超人的绳索。","你不是碎了，你在重铸。烈火中站住，才配拥有新生。成为你所是。"],
+        camus:["这种无意义感很冷，我听见了。先别求答案，继续把今天活完。必须想象西西弗斯幸福。","重复会磨空人，但清醒本身就是反抗。反抗，故我们存在。","世界沉默，并不代表你也要沉默。点一盏小灯，继续走。在隆冬里有夏天。","荒诞不会消失，可你能选择姿态。看清，然后不投降。清醒地活着，就是反抗。","生活没有递来意义，我们就亲手放下一枚。没有轻蔑征服不了的命运。"],
+        schopenhauer:["你的痛苦被欲望牵着走。先少要一点，心会少受一点刑。欲望是痛苦的根。","嫉妒让人盯着别人的灯，忘了自己的夜路。减少欲望，便减少枷锁。","物质焦虑像海水，越喝越渴。退一步，看清幻象。幸福只是痛苦暂歇。","无聊不是空白，是意志暂时失去目标。看破它，别被它拖走。","世界不会因你渴望而温柔。少幻想，少受苦。人生在痛苦和无聊间摇摆。"],
+        adler:["讨好真的很累，你背了太多别人的情绪。先分清谁的课题。课题分离，是温柔的边界。","你害怕被讨厌，所以一直委屈自己。自由就是被别人讨厌的勇气。","不敢拒绝，不代表你善良到无边。你也有位置。你的人生由你自己选择。","社交里的紧张可以理解。先从一个真实表达开始。贡献感带来归属感。","别人失望，不等于你做错。把他人的评价还给他。不要活在别人的课题里。"]
+      };
+      const keywordGroups = {
+        eastern: {
+          wangYangming:["焦虑","压力","工作","做不完","内耗","拖延","迷茫","想太多","行动","困难"],
+          zhuangzi:["内卷","比较","同辈","容貌","外貌","求而不得","别人有","排名"],
+          sushi:["低谷","失恋","不公","熬不下去","难受","挫折","委屈"],
+          laozi:["控制","失控","未来","恐慌","争强","必须","害怕以后"],
+          kongmeng:["职场","人际","道德","纠葛","关系","被误解","责任"]
+        },
+        western: {
+          aurelius:["焦虑","压力","紧张","担心","控制不了","不可控","情绪失控","愤怒","生气"],
+          nietzsche:["软弱","抑郁","想放弃","放弃","绝望","崩溃","无力","重大打击"],
+          camus:["没意义","无意义","好没意思","没意思","荒诞","虚无","重复","每天重复","麻木"],
+          schopenhauer:["痛苦","欲望","嫉妒","物质","无聊","空虚","得不到"],
+          adler:["讨好","讨好别人","害怕被讨厌","怕被讨厌","别人怎么看我","不敢拒绝","社恐","评价"]
+        }
+      };
+      const routeRules = {
+        eastern: {
+          wangYangming: {
+            strong:["拖延","内耗","想太多","行动困难","做不完","执行不了","不知道怎么做"],
+            medium:["焦虑","压力","工作","迷茫","行动","开始","效率","计划"],
+            weak:["累","烦","乱"]
+          },
+          zhuangzi: {
+            strong:["内卷","比较","同辈压力","容貌焦虑","外貌焦虑","求而不得","别人都"],
+            medium:["排名","羡慕","嫉妒","不如别人","被比较","放不下","得不到"],
+            weak:["焦虑","压力","难受"]
+          },
+          sushi: {
+            strong:["失恋","低谷","熬不下去","人生低谷","被伤害","不公","挫折"],
+            medium:["难过","委屈","心碎","痛苦","撑不住","倒霉","失败"],
+            weak:["累","难受","孤独"]
+          },
+          laozi: {
+            strong:["控制欲","控制不了","恐慌未来","害怕以后","争强好胜","必须赢","失控","不确定","放不下","太用力","顺其自然","顺势","松开"],
+            medium:["未来","担心","害怕","焦虑","控制","恐慌","争强","必须","别急"],
+            weak:["压力","紧张","乱","累"]
+          },
+          kongmeng: {
+            strong:["职场委屈","人际纠葛","道德困境","被误解","关系破裂","责任冲突"],
+            medium:["职场","同事","领导","朋友","家人","人际","边界","责任","公平"],
+            weak:["委屈","纠结","难受"]
+          }
+        },
+        western: {
+          aurelius: {
+            strong:["不可控焦虑","控制不了","情绪失控","愤怒","生气","冲动","焦虑"],
+            medium:["压力","担心","紧张","失控","害怕","烦躁"],
+            weak:["累","乱"]
+          },
+          nietzsche: {
+            strong:["抑郁","软弱","想放弃","绝望","重大打击","崩溃","活不下去"],
+            medium:["无力","失败","痛苦","撑不住","低谷","被击垮"],
+            weak:["难受","累"]
+          },
+          camus: {
+            strong:["没意义","无意义","好没意思","荒诞","虚无","每天重复","麻木"],
+            medium:["重复","空洞","生活没意思","不知道为什么","没有意义"],
+            weak:["无聊","累"]
+          },
+          schopenhauer: {
+            strong:["欲望痛苦","物质焦虑","嫉妒","欲望","无聊","空虚","得不到"],
+            medium:["痛苦","钱","物质","羡慕","比较","想要","不满足"],
+            weak:["难受","焦虑"]
+          },
+          adler: {
+            strong:["讨好","讨好别人","害怕被讨厌","怕被讨厌","别人怎么看我","不敢拒绝"],
+            medium:["社恐","评价","关系","边界","被绑架","不敢说不","迎合"],
+            weak:["很累","累","焦虑"]
+          }
+        }
+      };
+      const fallbackCursor = { all:0 };
+      function countWeightedHits(text, rule) {
+        let score = 0;
+        const hits = [];
+        const levels = [["strong",10],["medium",5],["weak",1]];
+        for (let l = 0; l < levels.length; l++) {
+          const list = rule[levels[l][0]] || [];
+          const weight = levels[l][1];
+          for (let i = 0; i < list.length; i++) {
+            const word = list[i];
+            if (text.indexOf(word) >= 0) {
+              const value = weight + Math.min(3, word.length);
+              score += value;
+              hits.push(word);
+            }
+          }
+        }
+        return { score, hits };
+      }
+      /** 根据用户文本在全部 10 位疗愈师中匹配；不再按东西方阵营过滤。@param {string} userText @returns {object} */
+      function matchPhilosopher(userText, camp) {
+        const text = String(userText || "").trim().toLowerCase();
+        const pool = configs;
+        let best = null;
+        let bestScore = -1;
+        const scores = [];
+        Log.group("[matchPhilosopher]");
+        Log.log("当前匹配范围: 全部 10 位疗愈师");
+        Log.log("用户输入:", text);
+        Log.log("候选哲学家:", pool.map(p => p.name).join(" / "));
+        for (let i = 0; i < pool.length; i++) {
+          const p = pool[i];
+          const ruleScore = countWeightedHits(text, (routeRules[p.camp] && routeRules[p.camp][p.id]) || {});
+          const tagScore = countWeightedHits(text, { medium:p.tags || [] });
+          const groupScore = countWeightedHits(text, { medium:(keywordGroups[p.camp] && keywordGroups[p.camp][p.id]) || [] });
+          const total = ruleScore.score + Math.floor((tagScore.score + groupScore.score) * .45);
+          scores.push({ camp:p.camp, name:p.name, id:p.id, ruleScore:ruleScore.score, tagScore:tagScore.score, groupScore:groupScore.score, hits:ruleScore.hits.join("、"), total });
+          if (total > bestScore) {
+            best = p;
+            bestScore = total;
+          }
+        }
+        Log.table(scores);
+        if (!best || bestScore <= 0) {
+          const fallbackIndex = fallbackCursor.all++ % pool.length;
+          best = pool[fallbackIndex];
+          Log.warn("无关键词命中，使用 10 位疗愈师轮转兜底:", best.name, "fallbackIndex:", fallbackIndex);
+        }
+        Log.log("匹配到的疗愈师:", best.name, "关键词匹配得分:", bestScore, "阵营:", best.camp);
+        Log.groupEnd();
+        return best;
+      }
+      return { configs, replies, matchPhilosopher };
+    })();
+
+    /* ═══════ 模块①：首页碰撞效果 ═══════ */
+    /* 本次融合：左侧旧东方粒子已替换为 TaijiSystem（太极旋转 + 星尘螺旋）；右侧西方 drawWest 保持原样。 */
+    class TaijiSystem {
+      constructor(home) {
+        this.home = home;
+        this.particles = [];
+        this.dynamicCanvas = document.createElement("canvas");
+        this.dynamicCtx = this.dynamicCanvas.getContext("2d", { alpha:true });
+        this.dynamicCanvas.setAttribute("aria-hidden", "true");
+        this.dynamicCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;background:transparent;";
+        this.rotation = 0;
+        this.dynamicRotation = 0;
+        this.dustCanvas = document.createElement("canvas");
+        this.dustCtx = this.dustCanvas.getContext("2d", { alpha:true });
+        this.dustReady = false;
+        this.dustPending = false;
+        this.dustW = 0;
+        this.dustH = 0;
+        this.whitePath = null;
+        this.blackPath = null;
+        this.whiteEyePath = null;
+        this.blackEyePath = null;
+        this.pathReady = false;
+        this.buildTaijiPaths();
+      }
+      buildTaijiPaths() {
+        if (typeof Path2D === "undefined") return;
+        const r = 72, eye = 13;
+        this.whitePath = new Path2D();
+        this.whitePath.arc(0, 0, r, -Math.PI / 2, Math.PI / 2);
+        this.whitePath.arc(0, r / 2, r / 2, Math.PI / 2, -Math.PI / 2, true);
+        this.whitePath.arc(0, -r / 2, r / 2, Math.PI / 2, -Math.PI / 2);
+        this.whitePath.closePath();
+        this.blackPath = new Path2D();
+        this.blackPath.arc(0, 0, r, Math.PI / 2, Math.PI * 1.5);
+        this.blackPath.arc(0, -r / 2, r / 2, -Math.PI / 2, Math.PI / 2, true);
+        this.blackPath.arc(0, r / 2, r / 2, -Math.PI / 2, Math.PI / 2);
+        this.blackPath.closePath();
+        this.blackEyePath = new Path2D();
+        this.blackEyePath.arc(0, -r / 2, eye, 0, TAU);
+        this.whiteEyePath = new Path2D();
+        this.whiteEyePath.arc(0, r / 2, eye, 0, TAU);
+        this.pathReady = true;
+      }
+      buildNebulaTexture() {
+        this.dustPending = false;
+        const home = this.home;
+        const dpr = home.dpr || 1;
+        const w = Math.max(1, Math.ceil(home.w * .52));
+        const h = Math.max(1, Math.ceil(home.h));
+        if (this.dustW === w && this.dustH === h && this.dustReady) return;
+        this.dustW = w; this.dustH = h;
+        this.dustCanvas.width = Math.floor(w * dpr);
+        this.dustCanvas.height = Math.floor(h * dpr);
+        this.dustCtx.setTransform(dpr,0,0,dpr,0,0);
+        this.dustCtx.clearRect(0,0,w,h);
+
+        const ctx = this.dustCtx;
+        const cx = home.w * .25, cy = home.h * .5;
+        const maxOrbit = Math.min(520, Math.max(350, home.w * .27));
+        const count = PerfConfig.reducedMotion ? 4000 : (PerfConfig.isMobile ? 10400 : 24800);
+
+        // 离屏星尘纹理：几千个静态微粒只在 resize 时绘制一次，运行时每帧 drawImage。
+        for (let i = 0; i < count; i++) {
+          const q = randomLut[lut(i * 17 + 3)];
+          const arm = i % 3;
+          const theta = q * TAU * 5.2 + arm * TAU / 3 + noiseLut[lut(i * 23)] * .45;
+          const band = randomLut[lut(i * 29 + 11)];
+          const radius = 78 + Math.pow(band, .72) * (maxOrbit - 78) + noiseLut[lut(i * 31)] * 18;
+          // 静态星尘分布：压住横向扩张，把新增密度更多铺到上/下弧带，避免左右继续变宽。
+          const x = cx + Math.cos(theta) * radius * .82 + noiseLut[lut(i * 37)] * 8;
+          const verticalBias = Math.sin(theta) >= 0 ? 1 : -1;
+          const y = cy + Math.sin(theta) * radius * .78 + verticalBias * Math.pow(randomLut[lut(i * 61)], 2) * 28 + noiseLut[lut(i * 41)] * 22;
+          if (x < 0 || x > w || y < 0 || y > h) continue;
+          const roll = randomLut[lut(i * 43)];
+          const alpha = .18 + randomLut[lut(i * 47)] * .46;
+          const size = .45 + randomLut[lut(i * 53)] * .75;
+          ctx.fillStyle = roll < .5
+            ? "rgba(135,206,235," + alpha + ")"
+            : roll < .82
+              ? "rgba(212,175,55," + (alpha * .92) + ")"
+              : "rgba(255,255,255," + (alpha * 1.05) + ")";
+          ctx.fillRect(x, y, size, size);
+        }
+
+        for (let i = 0; i < 520; i++) {
+          const theta = i / 520 * TAU * 4.8 + noiseLut[lut(i * 19)] * .18;
+          const radius = 105 + i / 520 * (maxOrbit - 105) + Math.sin(i * .17) * 10;
+          const x = cx + Math.cos(theta) * radius * .82;
+          const y = cy + Math.sin(theta) * radius * .78;
+          if (x < 0 || x > w || y < 0 || y > h) continue;
+          ctx.fillStyle = i % 4 === 0 ? "rgba(255,255,255,.58)" : "rgba(212,175,55,.42)";
+          ctx.fillRect(x, y, .9, .9);
+        }
+        this.dustReady = true;
+      }
+      scheduleNebulaTexture() {
+        if (this.dustPending) return;
+        this.dustPending = true;
+        const run = () => this.buildNebulaTexture();
+        if ("requestIdleCallback" in window) requestIdleCallback(run, { timeout: 600 });
+        else setTimeout(run, 16);
+      }
+      attachDynamicLayer() {
+        const parent = this.home.canvas.parentNode;
+        if (parent && this.dynamicCanvas.parentNode !== parent) parent.appendChild(this.dynamicCanvas);
+      }
+      resizeDynamicLayer() {
+        const home = this.home, dpr = home.dpr || 1;
+        this.attachDynamicLayer();
+        this.dynamicCanvas.width = Math.floor(home.w * dpr);
+        this.dynamicCanvas.height = Math.floor(home.h * dpr);
+        this.dynamicCtx.setTransform(dpr,0,0,dpr,0,0);
+      }
+      clearDynamicLayer() {
+        this.dynamicCtx.clearRect(0,0,this.home.w,this.home.h);
+      }
+      init(count) {
+        this.particles.length = 0;
+        const total = count || 900;
+        for (let i = 0; i < total; i++) {
+          const t = i / Math.max(1, total - 1);
+          const roll = randomLut[lut(i * 41)];
+          const p = {
+            x:0, y:0, sx:0, sy:0, ox:0, oy:0, vx:0, vy:0,
+            orbitNorm:t,
+            orbitRadius:80 + t * 270,
+            baseAngle:t * TAU * 7.6 + (i % 7) * TAU / 7 + noiseLut[lut(i * 11)] * 1.2,
+            angle:0,
+            drift:randomLut[lut(i * 13)] * TAU,
+            speed:.00035 + (1 - t) * .0012,
+            r:(2.6 + randomLut[lut(i * 17)] * 1) * 2,
+            phase:randomLut[lut(i * 23)] * TAU,
+            active:true,
+            c:roll < .5 ? "135,206,235" : roll < .8 ? "212,175,55" : "255,255,255",
+            baseAlpha:roll < .5 ? .7 : roll < .8 ? .62 : .82
+          };
+          this.particles[i] = p;
+        }
+      }
+      update(pointer) {
+        const home = this.home;
+        const cx = home.w * .25, cy = home.h * .5;
+        const maxOrbit = Math.min(520, Math.max(350, home.w * .27));
+        for (let i = 0; i < this.particles.length; i++) {
+          const p = this.particles[i];
+          if (p.active === false && home.transition) continue;
+          p.orbitRadius = 80 + p.orbitNorm * (maxOrbit - 80);
+          p.speed = .00035 + (1 - p.orbitNorm) * .0012;
+          p.angle = p.baseAngle + this.dynamicRotation + p.drift + Math.sin(home.frame * p.speed + p.phase) * .035;
+          const spiral = Math.sin(p.angle * 1.9 + p.phase) * (10 + p.orbitNorm * 24);
+          const baseX = cx + Math.cos(p.angle) * (p.orbitRadius + spiral) * .82;
+          const baseY = cy + Math.sin(p.angle) * (p.orbitRadius + spiral) * .78;
+          if (pointer.active) {
+            const dx = baseX + p.ox - pointer.x, dy = baseY + p.oy - pointer.y, d2 = dx * dx + dy * dy;
+            if (d2 > .01 && d2 < 10000) {
+              const f = (1 - d2 / 10000) * .7 / Math.sqrt(d2);
+              p.vx += dx * f;
+              p.vy += dy * f;
+            }
+          }
+          p.vx += -p.ox * .05;
+          p.vy += -p.oy * .05;
+          p.vx *= .88;
+          p.vy *= .88;
+          p.ox += p.vx;
+          p.oy += p.vy;
+          p.x = baseX + p.ox;
+          p.y = baseY + p.oy;
+        }
+        this.rotation += Math.PI / 6000;
+        this.dynamicRotation += .004;
+      }
+      draw(ctx) {
+        const home = this.home;
+        const cx = home.w * .25, cy = home.h * .5;
+        if (this.dustReady) {
+          ctx.save();
+          ctx.globalAlpha = .82;
+          ctx.translate(cx, cy);
+          ctx.rotate(this.rotation * .42);
+          ctx.drawImage(this.dustCanvas, -cx, -cy, this.dustW, this.dustH);
+          ctx.restore();
+        }
+        this.drawDynamicLayer(cx, cy);
+      }
+      drawDynamicLayer(cx, cy) {
+        const home = this.home, ctx = this.dynamicCtx;
+        ctx.clearRect(0,0,home.w,home.h);
+        // 动态星尘使用 fillRect 微粒，数量可以接近千级，仍比逐个 arc 更轻。
+        for (let i = 0; i < this.particles.length; i++) {
+          const p = this.particles[i];
+          if (p.active === false && home.transition) continue;
+          const alpha = clamp(p.baseAlpha + Math.sin(home.frame * .035 + p.phase) * .16, .16, .86);
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = "rgba(" + p.c + "," + alpha + ")";
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r * .5, 0, TAU);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        this.drawTaiji(ctx, cx, cy);
+        ctx.globalAlpha = 1;
+      }
+      drawTaiji(ctx, cx, cy) {
+        const r = 72, eye = 13;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(this.dynamicRotation);
+        if (this.pathReady) {
+          ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.fill(this.whitePath);
+          ctx.fillStyle = "rgba(10,14,26,.9)"; ctx.fill(this.blackPath);
+          ctx.fillStyle = "rgba(10,14,26,.95)"; ctx.fill(this.blackEyePath);
+          ctx.fillStyle = "rgba(255,255,255,.95)"; ctx.fill(this.whiteEyePath);
+        } else {
+          ctx.beginPath(); ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.arc(0,0,r,-Math.PI/2,Math.PI/2); ctx.arc(0,r/2,r/2,Math.PI/2,-Math.PI/2,true); ctx.arc(0,-r/2,r/2,Math.PI/2,-Math.PI/2); ctx.closePath(); ctx.fill();
+          ctx.beginPath(); ctx.fillStyle = "rgba(10,14,26,.9)"; ctx.arc(0,0,r,Math.PI/2,Math.PI*1.5); ctx.arc(0,-r/2,r/2,-Math.PI/2,Math.PI/2,true); ctx.arc(0,r/2,r/2,-Math.PI/2,Math.PI/2); ctx.closePath(); ctx.fill();
+          ctx.beginPath(); ctx.fillStyle = "rgba(10,14,26,.95)"; ctx.arc(0,-r/2,eye,0,TAU); ctx.fill();
+          ctx.beginPath(); ctx.fillStyle = "rgba(255,255,255,.95)"; ctx.arc(0,r/2,eye,0,TAU); ctx.fill();
+        }
+        ctx.strokeStyle = "rgba(226,232,240,.22)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, TAU);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    class HomeCollisionEffect {
+      constructor(canvas, onComplete) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext("2d", { alpha: false });
+        this.onComplete = onComplete;
+        this.dpr = 1; this.w = 1; this.h = 1; this.frame = 0; this.running = false; this.raf = 0;
+        const rm = PerfConfig.reducedMotion;
+        this.count = PerfConfig.isMobile ? PerfConfig.mobileParticles : PerfConfig.homeParticlesDesktop;
+        this.eastCount = rm ? 600 : (PerfConfig.isMobile ? 1200 : 2600);
+        this.westCount = rm ? 40 : (PerfConfig.isMobile ? 70 : 100);
+        this.east = []; this.west = []; this.sparks = []; this.sparkCursor = 0;
+        this.dataPulses = []; this.dataPulseCursor = 0;
+        this.taiji = new TaijiSystem(this);
+        this.transition = false; this.clickX = 0; this.clickY = 0; this.start = 0; this.completed = false; this.transitionElapsed = 0; this.transitionLast = 0; this.transitionCount = 0; this.transitionItems = new Array(100);
+        this.startedAt = performance.now();
+        this.pointer = { x:-9999, y:-9999, active:0 };
+        this.resize();
+        this.initParticles();
+        this.clickHandler = e => this.handlePointer(e);
+        EventHub.on(canvas, "pointerdown", this.clickHandler, { passive: true });
+        EventHub.on(canvas, "pointermove", e => { this.pointer.x = e.clientX; this.pointer.y = e.clientY; this.pointer.active = 1; }, { passive: true });
+      }
+      initParticles() {
+        this.east.length = 0; this.west.length = 0; this.sparks.length = 0;
+        this.taiji.init(this.eastCount);
+        this.east = this.taiji.particles;
+        for (let i = 0; i < this.westCount; i++) this.west[i] = this.makeParticle(i, false);
+        for (let i = 0; i < 30; i++) this.sparks[i] = { x:0, y:0, vx:0, vy:0, r:1, life:0, active:false, phase:(randomLut[lut(i*67)]*LUT_SIZE)|0, c:"#ffffff" };
+        for (let i = 0; i < 10; i++) this.dataPulses[i] = { active:false, ax:0, ay:0, bx:0, by:0, t:0, speed:.05, life:0 };
+      }
+      makeParticle(i, east) {
+        const speed = east ? .2 + randomLut[lut(i*41)] * .3 : .3 + randomLut[lut(i*43)] * .3;
+        const dir = randomLut[lut(i*53)] > .5 ? 1 : -1;
+        const p = { x:0,y:0,sx:0,sy:0,vx:speed*dir,vy:speed*(randomLut[lut(i*59)]>.5?1:-1),r: east ? 1.5 + randomLut[lut(i*9)]*2 : 1.5 + randomLut[lut(i*11)]*1.5, phase:(randomLut[lut(i*17)]*LUT_SIZE)|0, c:"#fff", shape:i&1, opacity:.55 };
+        const colors = ["#c0c0c0","#00bfff","#4b0082"];
+        p.c = colors[(randomLut[lut(i*23)] * colors.length) | 0];
+        p.x = east ? randomLut[lut(i*31)] * this.w * .48 : this.w*.52 + randomLut[lut(i*31)] * this.w*.48;
+        p.y = randomLut[lut(i*37)] * this.h;
+        return p;
+      }
+      resize() {
+        this.dpr = Math.min(devicePixelRatio || 1, 2);
+        this.w = innerWidth; this.h = innerHeight;
+        this.canvas.width = Math.floor(this.w * this.dpr);
+        this.canvas.height = Math.floor(this.h * this.dpr);
+        this.ctx.setTransform(this.dpr,0,0,this.dpr,0,0);
+        if (this.taiji) this.taiji.resizeDynamicLayer();
+        this.ctx.fillStyle = "#0a0e1a";
+        this.ctx.fillRect(0,0,this.w,this.h);
+        if (this.taiji) this.taiji.scheduleNebulaTexture();
+      }
+      handlePointer(e) {
+        if (this.transition) return;
+        AppState.camp = e.clientX < this.w * .5 ? "eastern" : "western";
+        try { localStorage.setItem("healingCamp", AppState.camp); } catch (err) {}
+        Log.log("首页选择阵营:", AppState.camp);
+        this.transition = true;
+        document.body.classList.add("home-transitioning");
+        this.clickX = e.clientX; this.clickY = e.clientY; this.start = performance.now(); this.transitionElapsed = 0; this.transitionLast = 0; this.transitionCount = 0;
+        for (let i = 0; i < this.east.length; i++) { this.east[i].sx = this.east[i].x; this.east[i].sy = this.east[i].y; }
+        for (let i = 0; i < this.west.length; i++) { this.west[i].sx = this.west[i].x; this.west[i].sy = this.west[i].y; }
+        for (let i = 0; i < this.sparks.length; i++) { this.sparks[i].sx = this.sparks[i].x; this.sparks[i].sy = this.sparks[i].y; }
+        this.selectTransitionParticles();
+      }
+      selectTransitionParticles() {
+        for (let i = 0; i < this.east.length; i++) this.east[i].active = false;
+        for (let i = 0; i < this.west.length; i++) this.west[i].active = false;
+        for (let i = 0; i < this.sparks.length; i++) if (this.sparks[i].active) this.sparks[i].active = false;
+        const total = this.east.length + this.west.length;
+        const limit = Math.min(100, total);
+        for (let i = 0; i < limit; i++) {
+          const pick = (randomLut[lut(i * 97 + this.frame)] * total) | 0;
+          let p = pick < this.east.length ? this.east[pick] : this.west[pick - this.east.length];
+          if (!p) p = this.east[i % this.east.length];
+          p.active = true;
+          p.sx = p.x; p.sy = p.y;
+          this.transitionItems[i] = p;
+        }
+        this.transitionCount = limit;
+      }
+      startLoop() { if (!this.running) { this.running = true; this.loop = this.loop || this.tick.bind(this); this.raf = requestAnimationFrame(this.loop); } }
+      stop() { this.running = false; cancelAnimationFrame(this.raf); }
+      destroy() { this.stop(); EventHub.offAll(this.canvas); if (this.taiji) this.taiji.clearDynamicLayer(); this.east = null; this.west = null; this.sparks = null; this.dataPulses = null; }
+      reduceParticles(ratio) { this.east.length = Math.max(20, (this.east.length * ratio) | 0); this.west.length = Math.max(20, (this.west.length * ratio) | 0); }
+      tick(now) {
+        if (!this.running) return;
+        this.frame++;
+        this.draw(now);
+        App.perf.tick(now);
+        this.raf = requestAnimationFrame(this.loop);
+      }
+      draw(now) {
+        const ctx = this.ctx;
+        // 拖尾渲染：用极低透明度背景覆盖制造“几百粒子像上万星尘”的星云带。
+        ctx.fillStyle = "rgba(10,14,26,.04)";
+        ctx.fillRect(0,0,this.w,this.h);
+        if (this.transition) {
+          if (this.taiji) this.taiji.clearDynamicLayer();
+          if (!this.transitionLast) this.transitionLast = now;
+          const dt = Math.min(32, now - this.transitionLast);
+          this.transitionLast = now;
+          this.transitionElapsed += dt;
+          const elapsed = this.transitionElapsed;
+          this.drawPortalTransition(elapsed);
+          if (elapsed >= 1000 && !this.completed) {
+            this.completed = true;
+            this.onComplete();
+          }
+          return;
+        }
+        this.drawAmbientTexture(ctx);
+        this.drawEast(ctx); this.drawWest(ctx); this.updateCollisions(); this.drawSparks(ctx);
+      }
+      drawAmbientTexture(ctx) {
+        // 右侧西方粒子逻辑（未修改）：保留原有极淡星轨背景，不触碰几何连线与粒子绘制。
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ctx.globalAlpha = .055;
+        ctx.strokeStyle = "rgba(0,191,255,.42)";
+        ctx.lineWidth = 1;
+        const cx = this.w * .76, cy = this.h * .5, spin = this.frame * .002;
+        ctx.beginPath();
+        for (let i = 0; i < 7; i++) {
+          const r = 90 + i * 38;
+          const a = spin + i * .27;
+          ctx.arc(cx, cy, r, a, a + Math.PI * 1.35);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+      drawPortalTransition(elapsed) {
+        const ctx = this.ctx;
+        if (elapsed < 600) {
+          const k = easeInQuad(elapsed / 600);
+          ctx.fillStyle = "rgba(10,14,26,.22)";
+          ctx.fillRect(0,0,this.w,this.h);
+          this.drawCollapse(k);
+          this.drawVortex(k);
+        } else if (elapsed < 1000) {
+          const k = clamp((elapsed - 600) / 400, 0, 1);
+          this.drawWormhole(k);
+          ctx.save();
+          ctx.globalAlpha = k * .72;
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0,0,this.w,this.h);
+          ctx.restore();
+        } else {
+          const k = clamp((elapsed - 1000) / 500, 0, 1);
+          ctx.fillStyle = "rgba(15,23,42," + (.35 + k * .65) + ")";
+          ctx.fillRect(0,0,this.w,this.h);
+        }
+      }
+      drawCollapse(k) {
+        const ctx = this.ctx;
+        ctx.shadowBlur = 0;
+        for (let i = 0; i < this.transitionCount; i++) {
+          const p = this.transitionItems[i];
+          p.x = lerp(p.sx, this.clickX, k); p.y = lerp(p.sy, this.clickY, k);
+          ctx.globalAlpha = .16 + k * .18; ctx.fillStyle = p.c || "#fff"; ctx.beginPath(); ctx.arc(p.x,p.y,(p.r || 1) * 2.2,0,TAU); ctx.fill();
+          ctx.globalAlpha = .55 + k * .45; ctx.beginPath(); ctx.arc(p.x,p.y,p.r || 1,0,TAU); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+      drawVortex(k) {
+        const ctx=this.ctx, r=10+k*48;
+        ctx.save();
+        ctx.globalAlpha=.18+k*.22; ctx.strokeStyle="rgba(255,255,255,.75)"; ctx.lineWidth=1;
+        for(let i=0;i<12;i++){const a=i/12*TAU+this.frame*.035;ctx.beginPath();ctx.arc(this.clickX,this.clickY,r+i*3,a,a+Math.PI*.72);ctx.stroke();}
+        ctx.globalAlpha=.22+k*.48; ctx.fillStyle="#ffffff"; ctx.beginPath(); ctx.arc(this.clickX,this.clickY,4+k*16,0,TAU); ctx.fill();
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      }
+      drawWormhole(k) {
+        const ctx=this.ctx, maxR=Math.hypot(this.w,this.h), r=lerp(20,maxR,k*k);
+        const g=ctx.createRadialGradient(this.clickX,this.clickY,0,this.clickX,this.clickY,r);
+        g.addColorStop(0,"rgba(255,255,255,1)");
+        g.addColorStop(.22,"rgba(230,245,255,.94)");
+        g.addColorStop(.58,"rgba(15,23,42,.72)");
+        g.addColorStop(1,"rgba(10,14,26,.96)");
+        ctx.fillStyle="#0a0e1a"; ctx.fillRect(0,0,this.w,this.h);
+        ctx.fillStyle=g; ctx.beginPath(); ctx.arc(this.clickX,this.clickY,r,0,TAU); ctx.fill();
+        ctx.save(); ctx.globalAlpha=.18*(1-k); ctx.strokeStyle="rgba(255,255,255,.6)"; ctx.lineWidth=1;
+        for(let i=0;i<18;i++){const a=i/18*TAU+this.frame*.02, len=r*.9;ctx.beginPath();ctx.moveTo(this.clickX+cosLut[lut(a/TAU*LUT_SIZE)]*r*.12,this.clickY+sinLut[lut(a/TAU*LUT_SIZE)]*r*.12);ctx.lineTo(this.clickX+Math.cos(a)*len,this.clickY+Math.sin(a)*len);ctx.stroke();}
+        ctx.restore();
+      }
+      drawEast(ctx) {
+        // 左侧东方粒子逻辑：完全替换为太极旋转 + 星尘螺旋系统；粒子仍暴露给碰撞/转场复用。
+        this.taiji.update(this.pointer);
+        this.taiji.draw(ctx);
+      }
+      drawWest(ctx) {
+        ctx.save(); ctx.strokeStyle = "rgba(0,191,255,.15)";
+        ctx.lineWidth = .5;
+        ctx.beginPath();
+        let activePulses = 0;
+        for (let i = 0; i < this.dataPulses.length; i++) if (this.dataPulses[i].active) activePulses++;
+        let pulseBudget = Math.min(10 - activePulses, 1 + (randomLut[lut(this.frame * 17)] * 3 | 0));
+        for (let i = 0; i < this.west.length; i++) for (let j = i+1; j < this.west.length; j++) {
+          const a = this.west[i], b = this.west[j], dx = a.x-b.x, dy = a.y-b.y;
+          if (dx*dx+dy*dy < 9025) {
+            ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+            // 新增：星轨脉冲/数据流。只在已有连线上挂载视觉光点，不改变连线和粒子物理。
+            if (pulseBudget > 0 && ((this.frame + i * 7 + j * 11) % 47 === 0)) {
+              this.spawnDataPulse(a.x, a.y, b.x, b.y);
+              pulseBudget--;
+            }
+          }
+        }
+        ctx.stroke();
+        for (let i = 0; i < this.west.length; i++) {
+          const p = this.west[i];
+          let vx = p.vx, vy = p.vy;
+          if (this.pointer.active) {
+            const dx = this.pointer.x - p.x, dy = this.pointer.y - p.y, d2 = dx*dx + dy*dy;
+            if (d2 > .01 && d2 < 22500) {
+              const f = (1 - d2 / 22500) * .75 / Math.sqrt(d2);
+              vx += dx * f; vy += dy * f;
+            }
+          }
+          p.x += vx; p.y += vy;
+          if (p.x < this.w*.5-20) p.x = this.w+20; if (p.x > this.w+20) p.x = this.w*.5;
+          if (p.y < -20) p.y = this.h; if (p.y > this.h+20) p.y = 0;
+          ctx.globalAlpha = randomLut[lut((this.frame>>2)+p.phase)] > .96 ? 1 : .65;
+          ctx.fillStyle = p.c;
+          if (p.shape) ctx.fillRect(p.x-p.r,p.y-p.r,p.r*2,p.r*2);
+          else { ctx.beginPath(); ctx.moveTo(p.x,p.y-p.r*1.4); ctx.lineTo(p.x+p.r,p.y+p.r); ctx.lineTo(p.x-p.r,p.y+p.r); ctx.fill(); }
+        }
+        this.drawDataPulses(ctx);
+        ctx.restore(); ctx.globalAlpha = 1;
+      }
+      spawnDataPulse(ax, ay, bx, by) {
+        const p = this.dataPulses[this.dataPulseCursor];
+        this.dataPulseCursor = (this.dataPulseCursor + 1) % this.dataPulses.length;
+        const dx = bx - ax, dy = by - ay, len = Math.max(1, Math.sqrt(dx*dx + dy*dy));
+        p.active = true; p.ax = ax; p.ay = ay; p.bx = bx; p.by = by; p.t = 0; p.life = 1; p.speed = Math.min(.16, 5 / len);
+      }
+      drawDataPulses(ctx) {
+        // 新增：数据流光点对象池。最多 10 个，纯 Canvas 绘制，无 DOM、无新对象。
+        ctx.save();
+        ctx.fillStyle = "#dff8ff";
+        ctx.strokeStyle = "rgba(0,191,255,.45)";
+        ctx.lineWidth = 1;
+        for (let i = 0; i < this.dataPulses.length; i++) {
+          const p = this.dataPulses[i];
+          if (!p.active) continue;
+          p.t += p.speed;
+          if (p.t >= 1) { p.active = false; continue; }
+          const x = lerp(p.ax, p.bx, p.t), y = lerp(p.ay, p.by, p.t);
+          const tail = Math.max(0, p.t - .08);
+          ctx.globalAlpha = .28;
+          ctx.beginPath();
+          ctx.moveTo(lerp(p.ax, p.bx, tail), lerp(p.ay, p.by, tail));
+          ctx.lineTo(x, y);
+          ctx.stroke();
+          ctx.globalAlpha = .82;
+          ctx.beginPath();
+          ctx.arc(x, y, 1.8, 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+      updateCollisions() {
+        // 局部碰撞检测：只查中央 ±100px，且左侧只使用外轨星尘，避免 O(n²) 全量计算。
+        const cx = this.w * .5, minX = cx - 100, maxX = cx + 100;
+        const step = this.pointer.active ? 1 : 2;
+        for (let i = 0; i < this.east.length; i++) {
+          const a = this.east[i];
+          if (a.orbitRadius <= 280 || a.x < minX || a.x > maxX || ((this.frame + i) % step)) continue;
+          for (let j = 0; j < this.west.length; j++) {
+            const b = this.west[j];
+            if (b.x < minX || b.x > maxX) continue;
+            const dx = a.x - b.x, dy = a.y - b.y;
+            if (dx*dx + dy*dy < 1600) {
+              const s = this.sparks[this.sparkCursor];
+              this.sparkCursor = (this.sparkCursor + 1) % this.sparks.length;
+              const sparkAngle = randomLut[lut(this.frame + this.sparkCursor * 13)] * TAU;
+              const sparkSpeed = .35 + randomLut[lut(this.frame + this.sparkCursor * 17)] * .7;
+              s.x = (a.x + b.x) * .5; s.y = (a.y + b.y) * .5; s.vx = Math.cos(sparkAngle) * sparkSpeed; s.vy = Math.sin(sparkAngle) * sparkSpeed; s.r = 1; s.life = 15; s.active = true; s.c = randomLut[lut(this.frame + this.sparkCursor * 19)] > .7 ? "#d4af37" : "#ffffff";
+              break;
+            }
+          }
+        }
+      }
+      drawSparks(ctx) {
+        ctx.save(); ctx.shadowBlur = 0;
+        for (let i = 0; i < this.sparks.length; i++) {
+          const s = this.sparks[i];
+          if (!s.active) continue;
+          s.x += s.vx; s.y += s.vy; s.vx *= .94; s.vy *= .94;
+          ctx.fillStyle = s.c;
+          ctx.globalAlpha = s.life / 15;
+          ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill();
+          s.life--; if (s.life <= 0) s.active = false;
+        }
+        ctx.restore(); ctx.globalAlpha = 1;
+      }
+    }
+
+    /* ═══════ 模块③：粒子生命树引擎 ═══════ */
+    class TreeParticle {
+      constructor(i) {
+        this.i = i; this.x = 0; this.y = 0; this.tx = 0; this.ty = 0; this.fx = 0; this.fy = 0;
+        this.a = randomLut[lut(i*17+1)]; this.b = randomLut[lut(i*31+7)]; this.c = randomLut[lut(i*47+13)];
+        this.phase = (this.a * LUT_SIZE) | 0; this.phaseRad = this.a * TAU; this.layer = i / 199; this.side = this.b > .5 ? 1 : -1; this.r = 1.5 + this.c * 2;
+        this.baseR = this.r; this.opacity = .7; this.active = false; this.birthTime = 0;
+        this.noiseX = randomLut[lut(i*61+5)] * 2 - 1; this.noiseY = randomLut[lut(i*71+9)] * 2 - 1; this.noiseIndex = i * 13;
+        this.vx = 0; this.vy = 0; this.shapeType = 0; this.leaf = 0;
+      }
+    }
+    class TreeEngine {
+      constructor(canvas) {
+        this.canvas = canvas; this.ctx = canvas.getContext("2d", { alpha:false });
+        this.count = Math.min(PerfConfig.reducedMotion ? 120 : (PerfConfig.isMobile ? PerfConfig.mobileParticles : PerfConfig.treeParticlesDesktop), 300);
+        this.poolSize = this.count; this.renderLimit = 0; this.lastDebugFrame = 0; this.lastDebugTime = performance.now();
+        this.mouseX = -9999; this.mouseY = -9999; this.mouseMode = 0; this.mouseStrength = 0;
+        this.pool = new Array(this.count); this.stars = new Array(50);
+        for (let i = 0; i < this.count; i++) { this.pool[i] = new TreeParticle(i); this.pool[i].layer = i / (this.count - 1); }
+        this.branchNodes = new Array(this.count);
+        for (let i = 0; i < this.count; i++) this.branchNodes[i] = { x:0, y:0, depth:0, leaf:0 };
+        this.branchCount = 0;
+        for (let i = 0; i < this.stars.length; i++) this.stars[i] = { x:0, y:0, r:.5, a:.3, c:"#fff" };
+        this.bgCanvas = document.createElement("canvas"); this.bgCtx = this.bgCanvas.getContext("2d", { alpha:false });
+        this.shapePaths = this.buildShapePaths();
+        this.config = Philosophy.configs[0]; this.progress = 0; this.target = 0; this.frame = 0; this.running = false; this.raf = 0; this.motion = 1; this.crystal = false; this.crystalStart = 0; this.initialized = false;
+        this.resize();
+        EventHub.on(this.canvas, "click", e => this.handlePointer(e, 2), { passive:true });
+        EventHub.on(this.canvas, "mousemove", e => this.handlePointer(e, 1), { passive:true });
+      }
+      handlePointer(e, mode) {
+        const rect = this.canvas.getBoundingClientRect();
+        this.mouseX = e.clientX - rect.left;
+        this.mouseY = e.clientY - rect.top;
+        this.mouseMode = mode;
+        this.mouseStrength = mode === 2 ? 1 : .35;
+      }
+      /** 初始化指定哲学家的树。@param {object} config */
+      init(config) { this.config = config || Philosophy.configs[0]; this.progress = 0; this.target = 0; this.crystal = false; this.motion = 1; this.initialized = true; this.assignParticleShapes(); this.resize(); for(let i=0;i<this.pool.length;i++){this.pool[i].active=false;this.pool[i].birthTime=0;} Log.info("[TreeEngine] 只初始化一次", this.config.name || this.config.id); }
+      // 形状绘制函数准备：初始化时为粒子分配专属形状编号，渲染循环只做一次 drawParticle，避免旧圆圈与新形状叠加。
+      assignParticleShapes() {
+        const id = this.config && this.config.id;
+        for (let i = 0; i < this.pool.length; i++) {
+          const p = this.pool[i];
+          if (id === "wangYangming" || id === "kongmeng") p.shapeType = 1;                           // 方形
+          else if (id === "nietzsche" || id === "camus") p.shapeType = 3;                            // 三角形
+          else if (id === "zhuangzi" || id === "laozi" || id === "sushi") p.shapeType = 0;           // 圆形
+          else if (id === "aurelius" || id === "adler") p.shapeType = 6;                             // 六边形
+          else if (id === "schopenhauer") p.shapeType = 4;                                           // 菱形
+          else p.shapeType = 0;                                                                       // 兜底圆形
+        }
+      }
+      // 粒子形状 Path2D 缓存：复杂几何只在初始化时创建，requestAnimationFrame 中不重复构造路径。
+      buildShapePaths() {
+        if (typeof Path2D === "undefined") return null;
+        const triangle = new Path2D();
+        triangle.moveTo(0, -1);
+        triangle.lineTo(.9, .75);
+        triangle.lineTo(-.9, .75);
+        triangle.closePath();
+        const diamond = new Path2D();
+        diamond.moveTo(0, -1);
+        diamond.lineTo(.78, 0);
+        diamond.lineTo(0, 1);
+        diamond.lineTo(-.78, 0);
+        diamond.closePath();
+        const hexagon = new Path2D();
+        for (let i = 0; i < 6; i++) {
+          const angle = Math.PI / 3 * i + Math.PI / 6;
+          const x = Math.cos(angle), y = Math.sin(angle);
+          if (i === 0) hexagon.moveTo(x, y);
+          else hexagon.lineTo(x, y);
+        }
+        hexagon.closePath();
+        return { triangle, diamond, hexagon };
+      }
+      resize() {
+        const rect = this.canvas.getBoundingClientRect();
+        this.w = Math.max(1, rect.width); this.h = Math.max(1, rect.height); this.dpr = Math.min(devicePixelRatio || 1, 2);
+        this.canvas.width = Math.floor(this.w*this.dpr); this.canvas.height = Math.floor(this.h*this.dpr);
+        this.canvas.style.width = this.w + "px"; this.canvas.style.height = this.h + "px";
+        this.ctx.setTransform(this.dpr,0,0,this.dpr,0,0); this.rootX = this.w*.5; this.rootY = this.h*.85; this.treeH = this.h*.58;
+        this.buildBackground();
+        this.drawEmptyState();
+        if (this.initialized) this.reset();
+      }
+      buildBackground() {
+        this.bgCanvas.width = Math.floor(this.w * this.dpr); this.bgCanvas.height = Math.floor(this.h * this.dpr);
+        this.bgCtx.setTransform(this.dpr,0,0,this.dpr,0,0);
+        const g = this.bgCtx.createRadialGradient(this.w*.52,this.h*.42,20,this.w*.5,this.h*.5,Math.max(this.w,this.h)*.72);
+        g.addColorStop(0,"#0f172a"); g.addColorStop(1,"#0a0e1a");
+        this.bgCtx.fillStyle = g; this.bgCtx.fillRect(0,0,this.w,this.h);
+        const colors = ["rgba(255,255,255,","rgba(173,216,255,","rgba(196,181,253,"];
+        for(let i=0;i<this.stars.length;i++){
+          const s=this.stars[i]; s.x=randomLut[lut(i*19)]*this.w; s.y=randomLut[lut(i*29)]*this.h; s.r=.5+randomLut[lut(i*37)]; s.a=.2+randomLut[lut(i*43)]*.3; s.c=colors[(randomLut[lut(i*47)]*colors.length)|0]+s.a+")";
+          this.bgCtx.fillStyle=s.c; this.bgCtx.beginPath(); this.bgCtx.arc(s.x,s.y,s.r,0,TAU); this.bgCtx.fill();
+        }
+      }
+      drawBackground() { this.ctx.drawImage(this.bgCanvas,0,0,this.w,this.h); }
+      drawEmptyState() {
+        this.drawBackground();
+        this.ctx.save();
+        this.ctx.globalAlpha = .2;
+        this.ctx.fillStyle = "#ffffff";
+        this.ctx.beginPath();
+        this.ctx.arc(this.w * .5, this.h * .5, 2, 0, TAU);
+        this.ctx.fill();
+        this.ctx.restore();
+      }
+      reset() {
+        for (let i = 0; i < this.pool.length; i++) {
+          const p = this.pool[i], a = lut(p.phase), r = randomLut[lut(p.phase+3)] * 30;
+          p.x = this.rootX + cosLut[a]*r; p.y = this.rootY + sinLut[a]*r; p.tx = p.x; p.ty = p.y;
+        }
+      }
+      start() { if (!this.running) { this.running = true; this.loop = this.loop || this.tick.bind(this); this.raf = requestAnimationFrame(this.loop); } }
+      stop() { this.running = false; cancelAnimationFrame(this.raf); }
+      destroy() { this.stop(); EventHub.offAll(this.canvas); this.pool = null; this.stars = null; this.bgCanvas.width = 0; this.bgCanvas.height = 0; }
+      reduceParticles(ratio) { this.renderLimit = Math.max(50, Math.min(150, (this.renderLimit * ratio) | 0)); }
+      /** 设置生长进度。@param {number} value 0-100 */
+      setProgress(value) { const next = clamp(Number(value) || 0, 0, 100); if ((Number(value) || 0) !== next) Log.warn("[TreeEngine] progress 越界，已截断", value, "=>", next); this.target = next; AppState.growthProgress = next; }
+      /** 触发结晶动画。 */
+      crystallize() { if (!this.initialized) return; this.setProgress(100); this.progress = 100; this.crystal = true; this.crystalStart = performance.now(); for (let i=0;i<this.pool.length;i++){this.pool[i].fx=this.pool[i].x;this.pool[i].fy=this.pool[i].y;} }
+      /** 获取当前树截图。@returns {string} */
+      getImageData() { return this.canvas.toDataURL("image/png"); }
+      tick(now) {
+        if (!this.running) return;
+        try {
+          if (!this.ctx || !this.pool || this.pool.length === 0) throw new Error("TreeEngine context or particle pool invalid");
+          this.render(now);
+        } catch (err) {
+          console.error("[TreeEngine] 渲染异常，自动恢复", err);
+          if (!this.pool || this.pool.length === 0) {
+            this.pool = new Array(this.poolSize);
+            for (let i = 0; i < this.poolSize; i++) { this.pool[i] = new TreeParticle(i); this.pool[i].layer = i / (this.poolSize - 1); }
+          }
+          this.ctx = this.canvas.getContext("2d", { alpha:false });
+          this.resize();
+          showToast("粒子引擎已自动重启");
+        }
+        App.perf.tick(now);
+        this.raf = requestAnimationFrame(this.loop);
+      }
+      calcTarget(p, grow, leaf) {
+        const y = p.layer, h = this.treeH * grow, type = this.config.trajectory;
+        let x = this.rootX, yy = this.rootY - h*y, branch = p.side*y*y*(70+p.c*120)*leaf, t = this.frame;
+        if (type==="fluid") { const a=lut(p.phase+t); const r=(30+150*y)*grow; x+=cosLut[a]*r*p.b; yy+=sinLut[lut(p.phase+t*2)]*r*.32; }
+        else if (type==="curve") x += sinLut[lut(y*800+t)]*48*y + branch;
+        else if (type==="spiral") { const a=lut(p.phase+y*900+t); x+=cosLut[a]*(18+y*95)*grow; yy+=sinLut[a]*22; }
+        else if (type==="pyramid") x += (((p.i%17)/16)-.5)*300*(1-y)*grow;
+        else if (type==="stack") x += ((p.i%9)-4)*8 + (y>.84 ? ((p.i%19)-9)*5 : 0);
+        else if (type==="lightning") x += (randomLut[lut(((y*8)|0)*97+p.i)]-.5)*150*grow + branch;
+        else if (type==="sway") x += sinLut[lut(t+y*700)]*55*y + branch*.6;
+        else if (type==="pendulum") x += sinLut[lut(t)]*85*y + branch*.45;
+        else if (type==="network") { const a=lut((p.i%40)*51+t); const r=(30+((p.i/40)|0)*28)*grow; x+=cosLut[a]*r*(.9+y); yy+=sinLut[a]*r*.35; }
+        else x += branch*.28 + ((p.i%7)-3)*1.4;
+        p.tx = x; p.ty = yy;
+      }
+      /**
+       * generateBranches(progress, philosopherType)
+       * 迭代生成“树枝骨架点”，粒子随后附着到这些点上。
+       * progress 0-50 主要生成主干与一级分叉，50-100 逐步补齐二/三级树冠。
+       */
+      generateBranches(progress, philosopherType) {
+        this.branchCount = 0;
+        const stage = clamp((progress - 25) / 75, 0, 1);
+        const crown = clamp((progress - 50) / 50, 0, 1);
+        const trunkH = this.treeH * (.18 + stage * .72);
+        const type = philosopherType || "straight";
+        if (type === "straight") this.genBamboo(trunkH, crown);
+        else if (type === "fluid") this.genVine(trunkH, crown);
+        else if (type === "curve") this.genBlossomTree(trunkH, crown);
+        else if (type === "spiral") this.genWillow(trunkH, crown);
+        else if (type === "pyramid") this.genCanopy(trunkH, crown);
+        else if (type === "stack") this.genColumn(trunkH, crown);
+        else if (type === "lightning") this.genLightning(trunkH, crown);
+        else if (type === "sway") this.genBrokenTree(trunkH, crown);
+        else if (type === "pendulum") this.genPendulumTree(trunkH, crown);
+        else if (type === "network") this.genNetworkTree(trunkH, crown);
+        else this.genBamboo(trunkH, crown);
+        this.enrichCrown(type, crown);
+        return this.branchCount;
+      }
+      addNode(x,y,depth,leaf){ if(this.branchCount>=this.branchNodes.length)return; const n=this.branchNodes[this.branchCount++]; n.x=x; n.y=y; n.depth=depth; n.leaf=leaf?1:0; }
+      addSegment(x1,y1,x2,y2,steps,depth,warp){
+        for(let i=0;i<steps;i++){const t=steps<=1?1:i/(steps-1);let x=lerp(x1,x2,t),y=lerp(y1,y2,t);if(warp){x+=warp.x(t);y+=warp.y(t);}this.addNode(x,y,depth);}
+      }
+      addLeafCluster(x,y,depth,amount,spread){
+        for(let i=0;i<amount;i++){
+          const a=lut(this.frame + this.branchCount*31 + i*101), r=spread*(.35+randomLut[lut(i*53+this.branchCount)]*.65);
+          this.addNode(x+cosLut[a]*r,y+sinLut[a]*r,depth,1);
+        }
+      }
+      enrichCrown(type,crown){
+        if(crown<=.02)return;
+        const initial=this.branchCount, maxSeeds=Math.min(initial, 34 + (crown*26|0));
+        for(let i=0;i<maxSeeds && this.branchCount<this.branchNodes.length;i++){
+          const src=this.branchNodes[(initial-1-i*3+initial)%initial];
+          if(!src || src.y>this.rootY-this.treeH*.25)continue;
+          const side=i%2?1:-1, baseSpread=type==="pyramid"?45:type==="straight"?18:type==="stack"?32:type==="lightning"?26:55;
+          let x=src.x,y=src.y,ang=(-90+side*(28+baseSpread*crown)+((randomLut[lut(i*47)]-.5)*26))*Math.PI/180,len=(34+54*crown)*(1-randomLut[lut(i*17)]*.35);
+          if(type==="spiral")ang+=(side*.35); if(type==="network")len*=.75; if(type==="sway")ang+=Math.sin(i)*.45;
+          for(let d=2;d<=4 && this.branchCount<this.branchNodes.length;d++){
+            const nx=x+Math.cos(ang)*len, ny=y+Math.sin(ang)*len + (type==="spiral"?d*10:0);
+            this.addSegment(x,y,nx,ny,4,d,{x:t=>Math.sin(t*Math.PI+i)*side*5*crown,y:t=>0});
+            x=nx;y=ny;ang+=side*(.22+randomLut[lut(i*d*23)]*.18);len*=.62;
+          }
+          this.addLeafCluster(x,y,4,3+(randomLut[lut(i*91)]*3|0),12+18*crown);
+        }
+      }
+      genBamboo(h,c){const x=this.rootX,y=this.rootY,top=y-h;this.addSegment(x,y,x,top,48,0,{x:t=>Math.sin(t*10)*2,y:t=>0});for(let i=1;i<7;i++){const by=y-h*i/7,len=18+18*c,side=i%2?1:-1;this.addSegment(x,by,x+side*len,by-12,5,1,{x:t=>0,y:t=>0});}}
+      genVine(h,c){const x=this.rootX,y=this.rootY,top=y-h;this.addSegment(x,y,x,top,42,0,{x:t=>Math.sin(t*8+this.frame*.02)*38*t,y:t=>0});for(let b=0;b<8+8*c;b++){const t=(b+1)/(9+8*c),bx=x+Math.sin(t*8)*38*t,by=lerp(y,top,t),ang=(b%2?1:-1)*(35+randomLut[lut(b*37)]*45)*Math.PI/180,len=(45+50*c)*(1-t*.4);this.addSegment(bx,by,bx+Math.cos(-Math.PI/2+ang)*len,by+Math.sin(-Math.PI/2+ang)*len,8,1,{x:q=>Math.sin(q*5+b)*10,y:q=>0});}}
+      genBlossomTree(h,c){const x=this.rootX,y=this.rootY,top=y-h*.72;this.addSegment(x,y,x+Math.sin(this.frame*.01)*10,top,34,0,{x:t=>Math.sin(t*3)*18*t,y:t=>0});for(let b=0;b<10+12*c;b++){const side=b%2?1:-1,t=.35+(b%6)*.09,bx=x+Math.sin(t*3)*18*t,by=lerp(y,top,t),len=(70+80*c)*(1-t*.35),ang=(-90+side*(38+randomLut[lut(b*19)]*28))*Math.PI/180;this.addSegment(bx,by,bx+Math.cos(ang)*len,by+Math.sin(ang)*len,9,1,{x:q=>Math.sin(q*Math.PI)*side*14,y:q=>-Math.sin(q*Math.PI)*10});}}
+      genWillow(h,c){const x=this.rootX,y=this.rootY,top=y-h;this.addSegment(x,y,x,top,36,0,{x:t=>Math.sin(t*5)*16*t,y:t=>0});for(let b=0;b<12+10*c;b++){const side=b%2?1:-1,t=.25+(b%8)*.08,bx=x+Math.sin(t*5)*16*t,by=lerp(y,top,t),len=60+80*c,ex=bx+side*(25+randomLut[lut(b*23)]*55),ey=by+len*.5;this.addSegment(bx,by,ex,ey,9,1,{x:q=>Math.sin(q*Math.PI)*side*16,y:q=>q*q*34});}}
+      genCanopy(h,c){const x=this.rootX,y=this.rootY,top=y-h;this.addSegment(x,y,x,top,34,0,{x:t=>0,y:t=>0});for(let b=0;b<14+10*c;b++){const side=b%2?1:-1,t=.32+(b%7)*.08,bx=x,by=lerp(y,top,t),len=(70+90*c)*(1-t*.3),ang=(-90+side*45)*Math.PI/180;this.addSegment(bx,by,bx+Math.cos(ang)*len,by+Math.sin(ang)*len,8,1,{x:q=>0,y:q=>0});}}
+      genColumn(h,c){const x=this.rootX,y=this.rootY,top=y-h;for(let k=-1;k<=1;k++)this.addSegment(x+k*12,y,x+k*12,top,32,0,{x:t=>0,y:t=>0});for(let i=0;i<7;i++){const by=y-h*i/7,w=28+38*c;this.addSegment(x-w,by,x+w,by,8,1,{x:t=>0,y:t=>0});}}
+      genLightning(h,c){const x=this.rootX,y=this.rootY;let px=x,py=y;for(let s=0;s<9;s++){const nx=x+(randomLut[lut(s*41)]-.5)*90*(s/9),ny=y-h*(s+1)/9;this.addSegment(px,py,nx,ny,7,0,{x:t=>(randomLut[lut(s*71)]-.5)*12,y:t=>0});if(c>.2){const side=s%2?1:-1;this.addSegment(nx,ny,nx+side*(35+50*c),ny-25-30*c,5,1,{x:t=>side*t*8,y:t=>0});}px=nx;py=ny;}}
+      genBrokenTree(h,c){const x=this.rootX,y=this.rootY;let px=x,py=y;for(let s=0;s<7;s++){const nx=x+Math.sin(s*1.7)*34+(randomLut[lut(s*31)]-.5)*28,ny=y-h*(s+1)/7;this.addSegment(px,py,nx,ny,7,0,{x:t=>Math.sin(t*8+s)*6,y:t=>0});if(s%2===0)this.addSegment(nx,ny,nx+(s%4-1.5)*38,ny-28,5,1,{x:t=>0,y:t=>t>0.55?8:0});px=nx;py=ny;}}
+      genPendulumTree(h,c){const x=this.rootX,y=this.rootY,sway=Math.sin(this.frame*.03)*28,top=y-h;this.addSegment(x,y,x+sway,top,38,0,{x:t=>Math.sin(t*Math.PI)*sway*t,y:t=>0});for(let b=0;b<10+8*c;b++){const side=b%2?1:-1,t=.3+(b%7)*.08,bx=x+Math.sin(t*Math.PI)*sway*t,by=lerp(y,top,t),len=45+70*c;this.addSegment(bx,by,bx+side*len,by-28,7,1,{x:q=>Math.sin(this.frame*.03+q)*8*side,y:q=>0});}}
+      genNetworkTree(h,c){const x=this.rootX,y=this.rootY,top=y-h*.72;this.addSegment(x,y,x,top,24,0,{x:t=>0,y:t=>0});const rings=3+Math.floor(c*3);for(let r=1;r<=rings;r++){const cy=top+r*18,rad=36+r*28;for(let i=0;i<18;i++){const a=i/18*TAU+this.frame*.002*r;this.addNode(x+Math.cos(a)*rad,cy+Math.sin(a)*rad*.45,1+r);}}}
+      render(now) {
+        if (!this.initialized) {
+          this.drawEmptyState();
+          return;
+        }
+        this.frame++; this.target = clamp(this.target, 0, 100); this.progress = clamp(this.progress + (this.target - this.progress) * .075, 0, 100);
+        if (this.crystal) this.motion = 1 - easeOutCubic(clamp((now - this.crystalStart)/2000,0,1)); else this.motion = 1;
+        const ctx = this.ctx;
+        this.drawBackground();
+        const time = now * .001, progress = this.progress, sprout = clamp(progress/25,0,1), trunk = clamp((progress-25)/30,0,1), leaf = clamp((progress-55)/30,0,1), bloom = clamp((progress-85)/15,0,1);
+        const grow = progress < 25 ? sprout*.08 : progress < 55 ? trunk*.69 : .69 + leaf*.31;
+        const globalBreath = .5 + Math.sin(time * (progress >= 85 ? Math.PI : 1.5)) * .5;
+        const skeletonCount = progress >= 25 ? this.generateBranches(progress, this.config.trajectory) : 0;
+        const activeCount = progress >= 25 ? Math.min(this.activeCountForProgress(progress), Math.max(1, skeletonCount), this.pool.length) : this.activeCountForProgress(progress);
+        this.renderLimit = activeCount;
+        if (progress <= 5) { this.drawSeedAwakening(ctx, progress, time); return; }
+        if ((this.frame % 10) === 0) this.refreshBrownianNoise();
+        const brownian = this.brownianStrength(progress);
+        for (let i = 0; i < this.pool.length; i++) {
+          const p = this.pool[i];
+          p.active = i < activeCount;
+          if (!p.active) continue;
+          if (!p.birthTime) p.birthTime = this.frame;
+          if (progress < 15) this.calcEnergyGather(p, progress);
+          else if (progress < 25) this.calcSproutOrb(p, progress, time, globalBreath);
+          else {
+            const node = this.branchNodes[i % Math.max(1, skeletonCount)];
+            p.tx = node.x + noiseLut[lut(p.phase + this.frame)] * 4 + Math.sin(time*3 + i) * 1.2;
+            p.ty = node.y + noiseLut[lut(p.phase + this.frame*2)] * 4;
+            p.leaf = node.leaf;
+            if (this.config.trajectory === "pendulum") p.tx += Math.sin(time * 1.4 + p.layer * 4) * 5;
+            if (this.config.trajectory === "network" && i > 2) p.tx += Math.sin(time + i) * 2;
+            this.applyCrystalMotion(p, i, time);
+          }
+          const follow = (progress<25?.09:progress<55?.12:.16) * this.motion;
+          this.applyPointerForce(p);
+          p.vx += (p.tx - p.x) * .018;
+          p.vy += (p.ty - p.y) * .018;
+          p.vx *= .9; p.vy *= .9;
+          p.x += (p.tx-p.x)*follow + p.vx; p.y += (p.ty-p.y)*follow + p.vy;
+          p.x += p.noiseX * brownian * .5; p.y += p.noiseY * brownian * .5;
+          p.opacity = this.crystal ? .6 + Math.sin(time*1.2 + p.phaseRad)*.15 : (.4 + globalBreath*.25 + Math.sin(time*2 + p.phaseRad)*.15 + bloom*.1);
+          const age = this.frame - p.birthTime;
+          p.r = p.baseR * (p.leaf ? .72 : 1) * clamp(age / 10, 0, 1);
+        }
+        this.mouseStrength *= .94;
+        this.debugHealth(now, activeCount);
+        this.drawBranchSkeleton(activeCount);
+        this.drawParticles(leaf,bloom); this.drawBloom(bloom); if(this.crystal || progress >= 99.8) this.drawCrystalEffect(time);
+      }
+      activeCountForProgress(progress) {
+        if (progress < 5) return 0;
+        if (progress < 15) return (10 + (progress - 5)) | 0;
+        if (progress < 25) return (20 + (progress - 15) * 3) | 0;
+        if (progress < 55) return Math.min(80, this.pool.length);
+        if (progress < 85) return Math.min(180, this.pool.length);
+        return Math.min(300, this.pool.length);
+      }
+      applyPointerForce(p) {
+        if (this.mouseStrength <= .001) return;
+        const dx = p.x - this.mouseX, dy = p.y - this.mouseY, d2 = dx*dx + dy*dy;
+        if (d2 > 10000 || d2 < .01) return;
+        const dist = Math.sqrt(d2);
+        const isSoftAttractor = this.config && (this.config.id === "laozi" || this.config.trajectory === "spiral" || this.config.trajectory === "fluid");
+        const sign = this.mouseMode === 2 ? 1 : (isSoftAttractor ? -1 : 1);
+        const force = (1 - dist / 100) * this.mouseStrength * (this.mouseMode === 2 ? 5 : 1.2);
+        p.vx += sign * (dx / dist) * force;
+        p.vy += sign * (dy / dist) * force;
+      }
+      // 结晶状态逻辑：低功耗微颤、向中心轻微收缩和哲学家专属几何变化；不使用 shadowBlur。
+      applyCrystalMotion(p, index, time) {
+        if (!this.crystal && this.progress < 99.8) return;
+        const cx = this.rootX, cy = this.rootY - this.treeH * .55;
+        const pull = .055;
+        p.tx = lerp(p.tx, cx, pull);
+        p.ty = lerp(p.ty, cy, pull);
+        const jitter = sinLut[lut(this.frame * 9 + p.phase)] * 1.4;
+        p.tx += jitter;
+        p.ty += cosLut[lut(this.frame * 8 + p.phase)] * 1.1;
+        if (this.config.id === "adler") {
+          const ring = (index % 48) / 48 * TAU + time * .35;
+          const radius = 52 + ((index / 48) | 0) * 18;
+          p.tx = lerp(p.tx, cx + Math.cos(ring) * radius, .16);
+          p.ty = lerp(p.ty, cy + Math.sin(ring) * radius * .62, .16);
+        } else if (this.config.id === "nietzsche") {
+          const spike = (index % 9) / 9 * TAU;
+          const pulse = 1 + Math.sin(time * 8 + index) * .08;
+          p.tx += Math.cos(spike) * 10 * pulse;
+          p.ty += Math.sin(spike) * 10 * pulse;
+        } else if (this.config.id === "aurelius") {
+          p.tx = Math.round(p.tx / 8) * 8;
+          p.ty = Math.round(p.ty / 8) * 8;
+        }
+      }
+      brownianStrength(progress) {
+        if (this.crystal) return .2;
+        if (progress < 25) return 1.5;
+        if (progress < 55) return .8;
+        if (progress < 85) return 1.2;
+        if (progress < 100) return 2;
+        return .2;
+      }
+      refreshBrownianNoise() {
+        for (let i = 0; i < this.pool.length; i++) {
+          const p = this.pool[i];
+          p.noiseX = randomLut[lut(this.frame + p.noiseIndex)] * 2 - 1;
+          p.noiseY = randomLut[lut(this.frame + p.noiseIndex + 97)] * 2 - 1;
+        }
+      }
+      debugHealth(now, activeCount) {
+        if (this.frame % 60 !== 0) return;
+        const dt = now - this.lastDebugTime;
+        const fps = dt > 0 ? Math.round((this.frame - this.lastDebugFrame) * 1000 / dt) : 0;
+        this.lastDebugFrame = this.frame; this.lastDebugTime = now;
+        const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) + "MB" : "n/a";
+        Log.info("[TreeEngine]", "FPS:", fps, "particles:", activeCount, "progress:", this.progress.toFixed(1), "initialized:", this.initialized, "memory:", mem);
+        if (this.progress > 100 || activeCount === 0 && this.progress > 5) Log.warn("[TreeEngine] health warning", { progress:this.progress, activeCount, initialized:this.initialized });
+      }
+      drawSeedAwakening(ctx, progress, time) {
+        const flash = Math.abs(Math.sin(progress / 5 * Math.PI * 3));
+        ctx.save(); ctx.shadowBlur = 0; ctx.fillStyle = hexToRgba(this.config.color,.18 + flash * .18);
+        ctx.beginPath(); ctx.arc(this.rootX,this.rootY,4 + flash * 6,0,TAU); ctx.fill();
+        ctx.globalAlpha = .3 + flash * .45; ctx.fillStyle = hexToRgba(this.config.secondary,.9);
+        ctx.beginPath(); ctx.arc(this.rootX,this.rootY,1 + flash * 2,0,TAU); ctx.fill(); ctx.restore();
+      }
+      calcEnergyGather(p, progress) {
+        const t = clamp((progress - 5) / 10, 0, 1), k = 1 - (1 - t) * (1 - t);
+        const a = lut(p.phase), sourceR = Math.max(this.w,this.h) * (.28 + p.b*.2);
+        const sx = this.rootX + cosLut[a] * sourceR, sy = this.rootY + sinLut[a] * sourceR * .55;
+        p.tx = lerp(sx, this.rootX, k); p.ty = lerp(sy, this.rootY, k);
+      }
+      calcSproutOrb(p, progress, time, breath) {
+        const k = clamp((progress - 15) / 10, 0, 1), pulseR = 20 + breath * 20;
+        const a = lut(p.phase + this.frame * 2), brownX = noiseLut[lut(p.phase + this.frame*5)] * 3, brownY = noiseLut[lut(p.phase + this.frame*4)] * 3;
+        p.tx = this.rootX + cosLut[a] * pulseR * p.b * k + brownX;
+        p.ty = this.rootY + sinLut[a] * pulseR * p.b * k + brownY;
+      }
+      drawLinks(bloom) {
+        const ctx=this.ctx; ctx.save(); ctx.globalAlpha=.14+bloom*.22; ctx.strokeStyle=hexToRgba(this.config.secondary,.86); ctx.beginPath();
+        for(let i=0;i<this.pool.length-5;i+=3){if(!this.pool[i].active||!this.pool[i+5].active)continue;ctx.moveTo(this.pool[i].x,this.pool[i].y);ctx.lineTo(this.pool[i+5].x,this.pool[i+5].y);}
+        ctx.stroke(); ctx.restore();
+      }
+      drawBranchSkeleton(activeCount) {
+        if (this.branchCount < 2 || activeCount < 2) return;
+        const ctx=this.ctx; ctx.save(); ctx.globalAlpha=.18; ctx.strokeStyle=hexToRgba(this.config.color,.9); ctx.lineWidth=1;
+        ctx.beginPath();
+        const max=Math.min(this.branchCount, activeCount);
+        for(let i=1;i<max;i++){
+          const a=this.branchNodes[i-1],b=this.branchNodes[i];
+          if(a.leaf || b.leaf) continue;
+          if(Math.abs(a.depth-b.depth)>2) continue;
+          const dx=a.x-b.x,dy=a.y-b.y;
+          if(dx*dx+dy*dy<3600){ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);}
+        }
+        if(this.config.trajectory==="network"){
+          for(let i=8;i<max-8;i+=6){const a=this.branchNodes[i],b=this.branchNodes[i+6];ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);}
+        }
+        ctx.stroke(); ctx.restore();
+      }
+      drawParticles(leaf,bloom) {
+        const ctx=this.ctx; ctx.save(); ctx.shadowBlur=0;
+        for(let i=0;i<this.pool.length;i++){
+          const p=this.pool[i]; if(!p.active)continue;
+          const color=p.leaf || p.a>.66?this.config.secondary:this.config.color;
+          const glow = p.leaf || bloom > .35;
+          if (glow) {
+            ctx.globalAlpha = p.opacity * (.16 + bloom * .18);
+            ctx.fillStyle = hexToRgba(color,.45);
+            this.drawParticle(ctx,p,this.config.id,p.r * 3.2);
+          }
+          ctx.globalAlpha=p.opacity; ctx.fillStyle=hexToRgba(color,.92);
+          this.drawParticle(ctx,p,this.config.id);
+        }
+        ctx.restore(); ctx.globalAlpha=1;
+      }
+      // 形状绘制函数：树粒子唯一绘制入口。这里保留允许的圆形哲学家，但不再额外绘制任何旧外圈。
+      drawParticle(ctx, particle, philosopherType, overrideSize) {
+        const x = particle.x, y = particle.y, size = Math.max(1.2, overrideSize || particle.r * 2), half = size * .5;
+        switch (particle.shapeType) {
+          case 1:
+            ctx.fillRect(x - half, y - half, size, size);
+            break;
+          case 3:
+            this.fillCachedShape(ctx, this.shapePaths && this.shapePaths.triangle, x, y, size, () => {
+              ctx.beginPath(); ctx.moveTo(x, y - size); ctx.lineTo(x + size * .9, y + size * .75); ctx.lineTo(x - size * .9, y + size * .75); ctx.closePath(); ctx.fill();
+            });
+            break;
+          case 6:
+            this.fillCachedShape(ctx, this.shapePaths && this.shapePaths.hexagon, x, y, half, () => this.drawHexagon(ctx, x, y, half));
+            break;
+          case 4:
+            this.fillCachedShape(ctx, this.shapePaths && this.shapePaths.diamond, x, y, size, () => {
+              ctx.beginPath(); ctx.moveTo(x, y - size); ctx.lineTo(x + size * .78, y); ctx.lineTo(x, y + size); ctx.lineTo(x - size * .78, y); ctx.closePath(); ctx.fill();
+            });
+            break;
+          default:
+            ctx.beginPath();
+            ctx.arc(x, y, half, 0, TAU);
+            ctx.fill();
+            break;
+        }
+      }
+      fillCachedShape(ctx, path, x, y, scale, fallback) {
+        if (!path) { fallback(); return; }
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(scale, scale);
+        ctx.fill(path);
+        ctx.restore();
+      }
+      drawHexagon(ctx, x, y, radius) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const angle = Math.PI / 3 * i + Math.PI / 6;
+          const hx = x + radius * Math.cos(angle);
+          const hy = y + radius * Math.sin(angle);
+          if (i === 0) ctx.moveTo(hx, hy);
+          else ctx.lineTo(hx, hy);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+      // 结晶阶段特效：无 shadowBlur，用线条/晶环/几何脉冲表达“仍然活着”的结晶态。
+      drawCrystalEffect(time) {
+        const ctx=this.ctx,cx=this.rootX,cy=this.rootY-this.treeH*.55,pulse=.5+Math.sin(time*2)*.5;
+        ctx.save();ctx.lineWidth=1;ctx.strokeStyle=hexToRgba(this.config.secondary,.72);ctx.globalAlpha=.22+.18*pulse;ctx.beginPath();
+        if(this.config.id==="adler"){
+          for(let i=0;i<this.pool.length-8;i+=12){const a=this.pool[i],b=this.pool[i+8];if(!a.active||!b.active)continue;ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);}
+        }else if(this.config.id==="nietzsche"){
+          for(let i=0;i<18;i++){const a=i/18*TAU+time*.6,r1=42+18*pulse,r2=84+28*pulse;ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1);ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2);}
+        }else if(this.config.id==="aurelius"){
+          ctx.strokeRect(cx-54,cy-this.treeH*.28,108,this.treeH*.48);
+        }else if(this.config.id==="schopenhauer"){
+          ctx.strokeStyle="rgba(255,255,255,.78)";ctx.moveTo(cx,cy+this.treeH*.04);ctx.lineTo(cx,cy-this.treeH*.36);
+        }
+        ctx.stroke();ctx.restore();
+      }
+      drawBloom(bloom) {
+        if (bloom <= .001) return;
+        const ctx=this.ctx,cx=this.rootX,cy=this.rootY-this.treeH*.68,t=this.frame; ctx.save(); ctx.globalAlpha=bloom*.42; ctx.strokeStyle=hexToRgba(this.config.secondary,.86); ctx.fillStyle=hexToRgba(this.config.color,.18); ctx.lineWidth=1.5;
+        if(this.config.bloom==="breath"){const pulse=.45+sinLut[lut(t*1.2)]*.25;ctx.globalAlpha=bloom*pulse*.45;ctx.strokeStyle=hexToRgba(this.config.secondary,.72);ctx.beginPath();ctx.ellipse(cx,cy,120+pulse*22,58+pulse*12,0,0,TAU);ctx.stroke();}
+        else if(this.config.bloom==="butterfly"){const flap=.85+sinLut[lut(t*2)]*.2;ctx.globalAlpha=bloom*.22;ctx.fillStyle=hexToRgba(this.config.secondary,.58);ctx.beginPath();ctx.ellipse(cx-46,cy,54*flap,76,-.45,0,TAU);ctx.ellipse(cx+46,cy,54*flap,76,.45,0,TAU);ctx.fill();}
+        else if(this.config.bloom==="petal"){ctx.globalAlpha=bloom*.58;ctx.fillStyle=hexToRgba(this.config.secondary,.82);for(let i=0;i<24;i++){const phase=lut(t*1.3+i*137),x=cx+(randomLut[lut(i*41)]-.5)*320+sinLut[phase]*22,y=this.rootY-this.treeH*.72+((t*.35+i*31)%240);ctx.beginPath();ctx.ellipse(x,y,3,8,sinLut[phase],0,TAU);ctx.fill();}}
+        else if(this.config.bloom==="yinyang"){const rot=t*.0009;ctx.translate(cx,cy);ctx.rotate(rot);ctx.globalAlpha=bloom*.55;ctx.beginPath();ctx.moveTo(0,-72);ctx.bezierCurveTo(48,-36,-48,36,0,72);ctx.stroke();}
+        else if(this.config.bloom==="canopy"){ctx.globalAlpha=bloom*.22;ctx.fillStyle=hexToRgba(this.config.secondary,.72);ctx.beginPath();ctx.ellipse(cx,cy-18,220,70,0,0,TAU);ctx.fill();}
+        else if(this.config.bloom==="stillness"){ctx.globalAlpha=bloom*.42;ctx.strokeRect(cx-54,this.rootY-this.treeH*.92,108,this.treeH*.82);}
+        else if(this.config.bloom==="explosion"){ctx.globalAlpha=bloom*.65;ctx.beginPath();for(let i=0;i<36;i++){const a=lut(i*113+t*2.2),len=80+randomLut[lut(i*67)]*110,ex=this.rootX+cosLut[a]*len,ey=this.rootY-this.treeH*.62+sinLut[a]*len;ctx.moveTo(this.rootX,this.rootY-this.treeH*.62);ctx.lineTo(ex,ey);}ctx.stroke();}
+        else if(this.config.bloom==="boulder"){const bx=cx+sinLut[lut(t*.45)]*8,by=this.rootY-this.treeH*.84;ctx.globalAlpha=bloom*.72;ctx.beginPath();ctx.moveTo(bx,by-44);ctx.lineTo(bx+54,by-10);ctx.lineTo(bx+35,by+42);ctx.lineTo(bx-42,by+34);ctx.lineTo(bx-58,by-16);ctx.closePath();ctx.fill();ctx.stroke();}
+        else if(this.config.bloom==="mist"){ctx.globalAlpha=bloom*.52;ctx.strokeStyle="rgba(255,255,255,.86)";ctx.beginPath();ctx.moveTo(cx,this.rootY-this.treeH*.52);ctx.lineTo(cx,this.rootY-this.treeH*.98);ctx.stroke();}
+        else if(this.config.bloom==="crystal"){ctx.globalAlpha=bloom*.36;ctx.beginPath();for(let i=0;i<14;i++){const a=lut(i*293+t*.35),x=cx+cosLut[a]*150,y=cy+sinLut[a]*92;ctx.moveTo(cx,cy);ctx.lineTo(x,y);ctx.moveTo(x+3,y);ctx.arc(x,y,3,0,TAU);}ctx.stroke();}
+        ctx.restore();
+      }
+    }
+
+    /* ═══════ 模块⑤：情绪卡片生成 ═══════ */
+    class CardRenderer {
+      constructor(){ this.w=390; this.h=680; this.treeH=374; this.nameH=68; this.timeH=34; }
+      /** 生成情绪卡片。@param {object} config @param {string} treeImageData @param {string=} quote @returns {Promise<string>} */
+      async generateCard(config, treeImageData, quote) {
+        const safeConfig = config || Philosophy.configs[0];
+        const safeQuote = this.shortQuote(safeConfig, quote);
+        const img = treeImageData ? await this.loadImage(treeImageData).catch(()=>null) : null;
+        const canvas = document.createElement("canvas"); canvas.width=this.w; canvas.height=this.h;
+        const ctx = canvas.getContext("2d", { alpha:false });
+        this.drawBg(ctx, safeConfig); this.drawTree(ctx, img, safeConfig); this.drawName(ctx, safeConfig); this.drawTime(ctx, safeConfig); this.drawQuote(ctx, safeConfig, safeQuote);
+        const data = canvas.toDataURL("image/png"); canvas.width=0; canvas.height=0; return data;
+      }
+      loadImage(src){ return new Promise((resolve,reject)=>{ const img=new Image(); img.onload=()=>resolve(img); img.onerror=reject; img.src=src; }); }
+      pick(config){ const p=(config && config.card_quote_pool && config.card_quote_pool.length) ? config.card_quote_pool : Philosophy.configs[0].card_quote_pool; return p[(Math.random()*p.length)|0]; }
+      shortQuote(config, quote){ const map={wangYangming:"知行合一",zhuangzi:"物我两忘",sushi:"一蓑烟雨任平生",laozi:"上善若水",kongmeng:"君子和而不同",aurelius:"只关注可控之事",nietzsche:"成为你自己",camus:"反抗故我们存在",schopenhauer:"减少欲望",adler:"课题分离"}; const q=String(quote||"").replace(/[“”"「」『』，。,.、\s]/g,""); return q && q.length<=15 ? q : (map[config.id] || this.pick(config).slice(0,15)); }
+      drawBg(ctx,c){ if(c.camp==="eastern"){ctx.fillStyle="#1a1a2e";ctx.fillRect(0,0,this.w,this.h);let g=ctx.createRadialGradient(90,180,10,90,180,250);g.addColorStop(0,"rgba(255,255,255,.045)");g.addColorStop(1,"rgba(255,255,255,0)");ctx.fillStyle=g;ctx.fillRect(0,0,this.w,this.h);}else{ctx.fillStyle="#0f172a";ctx.fillRect(0,0,this.w,this.h);ctx.save();ctx.globalAlpha=.08;ctx.strokeStyle="#fff";ctx.beginPath();for(let x=0;x<=this.w;x+=24){ctx.moveTo(x,0);ctx.lineTo(x,this.h);}for(let y=0;y<=this.h;y+=24){ctx.moveTo(0,y);ctx.lineTo(this.w,y);}ctx.stroke();ctx.restore();} }
+      drawTree(ctx,img,c){ if(img&&img.width&&img.height){const s=Math.max(this.w/img.width,this.treeH/img.height), sw=this.w/s, sh=this.treeH/s; ctx.drawImage(img,(img.width-sw)*.5,(img.height-sh)*.5,sw,sh,0,0,this.w,this.treeH);}else{const g0=ctx.createRadialGradient(this.w*.5,this.treeH*.48,2,this.w*.5,this.treeH*.48,180);g0.addColorStop(0,hexToRgba(c.color,.42));g0.addColorStop(1,"rgba(15,23,42,0)");ctx.fillStyle=g0;ctx.fillRect(0,0,this.w,this.treeH);} const g=ctx.createLinearGradient(0,this.treeH-40,0,this.treeH);g.addColorStop(0,"rgba(15,23,42,0)");g.addColorStop(1,c.camp==="eastern"?"rgba(26,26,46,.96)":"rgba(15,23,42,.96)");ctx.fillStyle=g;ctx.fillRect(0,this.treeH-40,this.w,40); }
+      drawName(ctx,c){ const y=this.treeH; ctx.save(); if(c.camp==="eastern"){ctx.fillStyle="#e2e8f0";ctx.font="28px 'Noto Serif SC','Songti SC',serif";ctx.textAlign="center";ctx.textBaseline="top";for(let i=0;i<c.name.length;i++)ctx.fillText(c.name[i],326,y+4+i*22);this.seal(ctx,c.name[0],344,y+38);}else{this.logo(ctx,38,y+20,c.color);ctx.fillStyle="#e2e8f0";ctx.font="600 24px InterLocal,Arial,sans-serif";ctx.textBaseline="middle";ctx.fillText(c.name,72,y+this.nameH*.5);}ctx.restore(); }
+      seal(ctx,t,x,y){ctx.save();ctx.translate(x+12,y+12);ctx.rotate(-5*Math.PI/180);ctx.strokeStyle="rgba(220,38,38,.92)";ctx.fillStyle="rgba(220,38,38,.82)";ctx.lineWidth=2;ctx.strokeRect(-12,-12,24,24);ctx.font="14px serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(t,0,1);ctx.restore();}
+      logo(ctx,x,y,color){ctx.save();ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x,y+22);ctx.lineTo(x+16,y);ctx.lineTo(x+32,y+22);ctx.closePath();ctx.moveTo(x+7,y+22);ctx.lineTo(x+16,y+8);ctx.lineTo(x+25,y+22);ctx.stroke();ctx.restore();}
+      drawTime(ctx,c){const map={wangYangming:"宜行动",zhuangzi:"宜放下",sushi:"宜品尝",laozi:"宜静观",kongmeng:"宜修身",aurelius:"宜克制",nietzsche:"宜重生",camus:"宜反抗",schopenhauer:"宜审美",adler:"宜分离"};const d=new Date(),pad=n=>String(n).padStart(2,"0");const text=d.getFullYear()+"."+pad(d.getMonth()+1)+"."+pad(d.getDate())+" · "+pad(d.getHours())+":"+pad(d.getMinutes())+" · "+map[c.id];ctx.fillStyle="rgba(255,255,255,.5)";ctx.font="12px InterLocal,Arial";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(text,this.w*.5,this.treeH+this.nameH+this.timeH*.5);}
+      drawQuote(ctx,c,q){const y=this.treeH+this.nameH+this.timeH;ctx.save();ctx.fillStyle="#fff";if(c.camp==="eastern"){ctx.font="24px 'Noto Serif SC','Songti SC',serif";ctx.textAlign="center";ctx.textBaseline="top";let text="「"+q+"」",x=270,yy=y+22;for(let i=0;i<text.length;i++){ctx.fillText(text[i],x,yy);yy+=32;if(yy>y+172){yy=y+22;x-=38;}}}else{const text="“"+q+"”";let size=20;ctx.textAlign="center";ctx.textBaseline="middle";ctx.font=size+"px Georgia,serif";while(ctx.measureText(text).width>306&&size>14){size--;ctx.font=size+"px Georgia,serif";}ctx.fillText(text,this.w*.5,y+86);ctx.strokeStyle="rgba(255,255,255,.34)";ctx.beginPath();ctx.moveTo(42,y+this.timeH+136);ctx.lineTo(348,y+this.timeH+136);ctx.stroke();}ctx.restore();}
+      wrap(ctx,text,x,y,max,lineH){let line="",yy=y;for(let i=0;i<text.length;i++){const t=line+text[i];if(ctx.measureText(t).width>max&&line){ctx.fillText(line,x,yy);line=text[i];yy+=lineH;}else line=t;}if(line)ctx.fillText(line,x,yy);}
+    }
+    class CardPreviewModal {
+      constructor(){ this.dataUrl=""; this.scale=1; this.startDist=0; this.baseScale=1; EventHub.on(Dom.cardModal,"click",e=>{ if(e.target===Dom.cardModal)this.close(); }); EventHub.on(Dom.continueBtn,"click",()=>this.close()); EventHub.on(Dom.cardModal,"touchstart",e=>this.touchStart(e),{passive:true}); EventHub.on(Dom.cardModal,"touchmove",e=>this.touchMove(e),{passive:false}); }
+      show(data){ this.dataUrl=data; this.scale=1; Dom.cardPreview.style.transform="scale(1)"; Dom.cardPreview.src=data; Dom.cardModal.classList.add("show"); Dom.cardModal.setAttribute("aria-hidden","false"); }
+      close(){ Dom.cardModal.classList.remove("show"); Dom.cardModal.setAttribute("aria-hidden","true"); }
+      touchStart(e){ if(e.touches.length===2){ const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; this.startDist=Math.hypot(dx,dy); this.baseScale=this.scale; } }
+      touchMove(e){ if(e.touches.length===2){ e.preventDefault(); const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; this.scale=clamp(this.baseScale*Math.hypot(dx,dy)/this.startDist,1,2.6); Dom.cardPreview.style.transform="scale("+this.scale+")"; } }
+    }
+    class DownloadManager {
+      /** 下载 dataURL。@param {string} dataUrl @param {string} name */
+      static download(dataUrl,name){ const d=new Date(),stamp=d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0"); const a=document.createElement("a"); a.href=dataUrl; a.download="情绪之树_"+name+"_"+stamp+".png"; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
+    }
+
+    const AIReplyService = {
+      config: null,
+      loaded: false,
+      async load() {
+        if (this.loaded) return this.config;
+        this.loaded = true;
+        if (window.API_CONFIG && window.API_CONFIG.apiKey) {
+          this.config = window.API_CONFIG;
+          Log.info("[AIReplyService] 已读取 api-config.js 配置");
+          return this.config;
+        }
+        try {
+          const res = await fetch("api-config.json", { cache:"no-store" });
+          if (!res.ok) throw new Error("api-config.json not found");
+          this.config = await res.json();
+          Log.info("[AIReplyService] 已读取 api-config.json 配置");
+        } catch (err) {
+          this.config = { enabled:false };
+          Log.info("[AIReplyService] 未读取到 api-config.js/json，使用本地模拟回复");
+        }
+        return this.config;
+      },
+      available() {
+        const c = this.config;
+        return !!(c && c.enabled && c.apiKey && c.apiKey !== "PASTE_YOUR_API_KEY_HERE");
+      },
+      buildPrompt(p, userText) {
+        return [
+          "你是一位跨时空情感疗愈导师："+p.name+"。",
+          "人设口吻："+p.slogan,
+          "情绪标签："+(p.tags||[]).join("、"),
+          "回复规则：第一句先接住情绪；总字数不超过50个中文字符；不要承认自己是AI；不要反问；结尾用一句符合人设的哲理短句。",
+          "用户烦恼："+userText
+        ].join("\n");
+      },
+      clean(text) {
+        const t = String(text || "").replace(/\s+/g,"").replace(/^["“”]+|["“”]+$/g,"");
+        return t.length > 50 ? t.slice(0,50) : t;
+      },
+      async reply(p, userText) {
+        await this.load();
+        if (!this.available()) { Log.info("[AIReplyService] API 未启用或未配置 Key，使用本地模拟回复"); return ""; }
+        const c = this.config, provider = String(c.provider || "gemini").toLowerCase();
+        const prompt = this.buildPrompt(p, userText);
+        if (provider === "openai" || provider === "mimo" || provider === "xiaomi" || provider === "xiaomi mimo") return this.clean(await this.openai(c, prompt));
+        return this.clean(await this.gemini(c, prompt));
+      },
+      async gemini(c, prompt) {
+        const model = c.model || "gemini-1.5-flash";
+        const url = c.endpoint || ("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent?key="+encodeURIComponent(c.apiKey));
+        const res = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ contents:[{ role:"user", parts:[{ text:prompt }] }], generationConfig:{ temperature:c.temperature ?? .7, maxOutputTokens:c.maxOutputTokens || 80 } }) });
+        if (!res.ok) throw new Error("Gemini API failed: "+res.status);
+        const data = await res.json();
+        return data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts ? data.candidates[0].content.parts.map(x=>x.text||"").join("") : "";
+      },
+      async openai(c, prompt) {
+        let url = c.endpoint || "https://api.openai.com/v1/chat/completions";
+        if (/\/v1\/?$/.test(url)) url = url.replace(/\/$/,"") + "/chat/completions";
+        const isMimo = /xiaomimimo/i.test(url) || /mimo|xiaomi/i.test(String(c.provider || ""));
+        const headers = isMimo ? { "Content-Type":"application/json", "api-key":c.apiKey } : { "Content-Type":"application/json", "Authorization":"Bearer "+c.apiKey };
+        const body = { model:c.model || (isMimo ? "mimo-v2.5-pro" : "gpt-4o-mini"), messages:[{ role:"system", content:"你是短句情感疗愈导师，严格遵守用户要求。" },{ role:"user", content:prompt }], temperature:c.temperature ?? .7 };
+        if (isMimo) { body.max_completion_tokens = Math.max(c.maxOutputTokens || 80, 256); body.top_p = c.topP ?? .95; body.stream = false; body.stop = null; body.frequency_penalty = 0; body.presence_penalty = 0; }
+        else body.max_tokens = c.maxOutputTokens || 80;
+        const res = await fetch(url, { method:"POST", headers, body:JSON.stringify(body) });
+        if (!res.ok) throw new Error("OpenAI API failed: "+res.status);
+        const data = await res.json();
+        return data && data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : "";
+      }
+    };
+
+    /* ═══════ 模块④：对话页面 ═══════ */
+    class ChatPage {
+      constructor() { this.turns = 0; this.typing = false; this.targetProgress = 0; }
+      init() {
+        this.renderLoading();
+        EventHub.on(Dom.sendBtn,"click",()=>this.send());
+        EventHub.on(Dom.userInput,"keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();this.send();} });
+        EventHub.on(Dom.userInput,"focus",()=>Dom.inputWrap.classList.add("focused"));
+        EventHub.on(Dom.userInput,"blur",()=>Dom.inputWrap.classList.remove("focused"));
+      }
+      reset() { this.turns=0; this.typing=false; this.targetProgress=0; Dom.messages.innerHTML=""; this.renderLoading(); }
+      renderLoading(){ Dom.mentorBar.innerHTML='<div class="mentorName">正在为您匹配跨时空导师...<span class="dots"><i></i><i></i><i></i></span></div>'; }
+      renderMatching(){ Dom.mentorBar.innerHTML='<div class="mentorName">正在匹配...<span class="dots"><i></i><i></i><i></i></span></div>'; }
+      renderMentor(p){ document.documentElement.style.setProperty("--mentor-color",p.color); document.documentElement.style.setProperty("--mentor-glow",hexToRgba(p.color,.38)); Dom.mentorBar.classList.add("fade"); setTimeout(()=>{Dom.mentorBar.innerHTML='<div class="avatar" style="background:'+p.color+'">'+p.initial+'</div><div><div class="mentorName">'+p.name+'</div><div class="mentorSlogan">'+p.slogan+'</div></div>';Dom.mentorBar.classList.remove("fade");},150); }
+      addMessage(role,text){ const row=document.createElement("div"),bubble=document.createElement("div"); row.className="message "+role; bubble.className="bubble"; bubble.textContent=text||""; row.appendChild(bubble); queueMicrotask(()=>{Dom.messages.appendChild(row); while(Dom.messages.children.length>20)Dom.messages.removeChild(Dom.messages.firstElementChild); Dom.messages.scrollTop=Dom.messages.scrollHeight;}); return bubble; }
+      send() {
+        if (this.typing) return;
+        const text = Dom.userInput.value.trim(); if (!text) return;
+        const isFirstMessage = !AppState.currentPhilosopher;
+        Dom.userInput.value = ""; this.turns++; AppState.conversationHistory.push({ role:"user", text }); if(AppState.conversationHistory.length>40)AppState.conversationHistory.splice(0,AppState.conversationHistory.length-40); this.addMessage("user", text);
+        if (isFirstMessage) {
+          this.renderMatching();
+          try { AppState.camp = localStorage.getItem("healingCamp") || AppState.camp; } catch (err) {}
+          const mentor = Philosophy.matchPhilosopher(text, AppState.camp);
+          setTimeout(()=>{ AppState.currentPhilosopher=mentor; this.renderMentor(mentor); App.tree.init(mentor); App.tree.start(); this.reply(); }, 2000); // 只初始化一次：后续对话只通过 setProgress 推进生长
+        } else this.reply();
+      }
+      nextProgress(){ if(this.turns>=4)return 100; if(this.turns>=3)return 85; if(this.turns>=2)return 55; if(this.turns>=1)return 25; return AppState.growthProgress; }
+      animateProgress(to,duration){ const from=clamp(AppState.growthProgress,0,100), target=clamp(to,0,100), start=performance.now(); const step=()=>{const k=clamp((performance.now()-start)/duration,0,1); AppState.growthProgress=clamp(from+(target-from)*k,0,100); App.tree.setProgress(AppState.growthProgress); if(k<1)requestAnimationFrame(step);}; requestAnimationFrame(step); }
+      async reply(){ const p=AppState.currentPhilosopher, bubble=this.addMessage("ai",""); this.typing=true; Dom.sendBtn.disabled=true; let text=""; try{text=await AIReplyService.reply(p,this.latestUserText());}catch(err){Log.warn("[AIReplyService] API 回复失败，回退本地模拟",err);} if(!text)text=this.smartReply(p); this.typing=false; Dom.sendBtn.disabled=false; const next=this.nextProgress(); if(next>AppState.growthProgress)this.animateProgress(next,Math.max(1200,text.length*40)); this.type(bubble,text,()=>{ if(this.turns>=4&&AppState.growthProgress>=99)App.tree.crystallize(); }); }
+      latestUserText(){ for(let i=AppState.conversationHistory.length-1;i>=0;i--) if(AppState.conversationHistory[i].role==="user") return AppState.conversationHistory[i].text; return ""; }
+      extractKeyword(text){
+        const keys=["焦虑","迷茫","压力","讨好","工作","内耗","拖延","失恋","愤怒","无意义","重复","虚无","嫉妒","社恐","不敢拒绝","控制","比较","低谷"];
+        for(let i=0;i<keys.length;i++) if(text.indexOf(keys[i])>=0) return keys[i];
+        return "这件事";
+      }
+      smartReply(p){
+        const keyword=this.extractKeyword(this.latestUserText());
+        const bank={
+          wangYangming:[["我知道{kw}让你很乱","你不是做不到","先别责备自己"],["只做眼前一小步","把念头落到行动里","先完成最小的一件事"],["知行合一","事上磨心","此心光明"]],
+          zhuangzi:[["你被{kw}缠住了","这把尺子量疼了你","心被外物牵走了"],["先松开一点","让风穿过心口","别替万物排队"],["相忘于江湖","天地与我并生","逍遥在松手处"]],
+          sushi:[["这份{kw}真难熬","我懂你此刻的苦味","风雨打在身上会疼"],["先照顾今日烟火","吃点热的再看路","把日子过热一点"],["一蓑烟雨任平生","此心安处是吾乡","人间有味是清欢"]],
+          laozi:[["{kw}把你推急了","你抓得太紧了","心被未来拉扯了"],["先慢一息","顺势而行","少用力，多留白"],["上善若水","知止不殆","夫唯不争"]],
+          kongmeng:[["这份{kw}确实压心","你的委屈我看见了","此事需要分寸"],["守住本心","先辨义，再行动","仁厚也要有边界"],["君子和而不同","义之所在，心自定","君子坦荡荡"]],
+          aurelius:[["我看见{kw}在扰动你","这阵焦灼很真实","外界正拉扯你的心"],["先分清可控之事","把判断权收回来","只管此刻能做的"],["宁静来自判断","你拥有支配心灵的力量","只关注你能控制之事"]],
+          nietzsche:[["别向{kw}低头","这痛正在试炼你","深渊靠近了"],["把它锻成力量","站直，重估它","别把软弱当命运"],["成为你自己","杀不死你的使你更强","重估一切价值"]],
+          camus:[["这种{kw}很冷","荒诞感会让人麻木","世界沉默时很难受"],["看清它，然后继续","给今天放下一枚意义","清醒本身就是反抗"],["反抗，故我们存在","必须想象西西弗斯幸福","隆冬里仍有夏天"]],
+          schopenhauer:[["你正被{kw}牵引","这份痛并不轻","欲望让心疲惫"],["少要一点，少受一点苦","先看破这层幻象","把比较放远一些"],["欲望是痛苦的根","减少欲望便减少枷锁","人生在痛苦与无聊间摇摆"]],
+          adler:[["{kw}让你背了太多别人","你不必替所有人舒服","害怕评价会很累"],["先分清谁的课题","把评价还给别人","允许自己不被所有人喜欢"],["课题分离","自由就是被讨厌的勇气","你的人生由你选择"]]
+        };
+        const parts=bank[p.id]||bank.wangYangming, seed=(this.turns*7+keyword.length)%10;
+        const a=parts[0][seed%parts[0].length].replace("{kw}",keyword);
+        const b=parts[1][(seed+1)%parts[1].length].replace("{kw}",keyword);
+        const c=parts[2][(seed+2)%parts[2].length].replace("{kw}",keyword);
+        return a+"。"+b+"。"+c+"。";
+      }
+      type(bubble,text,done){ let i=0; this.typing=true; Dom.sendBtn.disabled=true; const tick=()=>{bubble.textContent=text.slice(0,i); Dom.messages.scrollTop=Dom.messages.scrollHeight; if(i<text.length){i++;setTimeout(tick,40);}else{this.typing=false;Dom.sendBtn.disabled=false;AppState.conversationHistory.push({role:"ai",text}); if(AppState.conversationHistory.length>40)AppState.conversationHistory.splice(0,AppState.conversationHistory.length-40); if(done)done();}}; tick(); }
+    }
+
+    const App = {
+      home: null, tree: null, chat: null, perf: null, card: null, modal: null, lastCard: "",
+      init() {
+        if (!$("homeCanvas").getContext) { $("noCanvas").style.display = "grid"; return; }
+        Object.assign(Dom, {
+          homePage:$("homePage"), chatPage:$("chatPage"), homeCanvas:$("homeCanvas"), treeCanvas:$("treeCanvas"), flash:$("flash"),
+          mentorBar:$("mentorBar"), messages:$("messages"), userInput:$("userInput"), inputWrap:$("inputWrap"), sendBtn:$("sendBtn"),
+          saveBtn:$("saveBtn"), homeBtn:$("homeBtn"), fps:$("fps"), toast:$("toast"), cardModal:$("cardModal"), cardPreview:$("cardPreview"),
+          downloadBtn:$("downloadBtn"), continueBtn:$("continueBtn")
+        });
+        this.perf = new PerformanceMonitor(Dom.fps);
+        this.card = new CardRenderer();
+        this.modal = new CardPreviewModal();
+        AIReplyService.load();
+        this.chat = new ChatPage(); this.chat.init();
+        this.home = new HomeCollisionEffect(Dom.homeCanvas, () => this.goChat());
+        this.home.startLoop();
+        EventHub.on(window,"resize",()=>this.resize(),{passive:true});
+        EventHub.on(document,"visibilitychange",()=>this.visibility());
+        EventHub.on(Dom.homeBtn,"click",()=>this.goHome());
+        EventHub.on(Dom.saveBtn,"click",()=>this.saveCard());
+        EventHub.on(Dom.downloadBtn,"click",()=>{ if(this.lastCard) DownloadManager.download(this.lastCard, (AppState.currentPhilosopher||Philosophy.configs[0]).name); });
+        Dom.saveBtn.style.display = "none"; Dom.homeBtn.style.display = "none";
+        Log.log("测试1：首页点击左侧 -> 输入“我很焦虑” -> 王阳明 -> 8轮 -> 卡片");
+        Log.log("测试1匹配结果", Philosophy.matchPhilosopher("我很焦虑", "eastern").name);
+        Log.log("测试2：首页点击右侧 -> 输入“讨好别人很累” -> 阿德勒 -> 48轮稳定保留最近20条 -> 卡片");
+        Log.log("测试2匹配结果", Philosophy.matchPhilosopher("讨好别人很累", "western").name);
+        Log.log("测试3：对话萌芽阶段点击保存 -> 萌芽卡片");
+        Log.log("测试3操作提示", "进入对话页后不发送消息，直接点击右上角📷");
+      },
+      goChat() {
+        if (AppState.currentPage === "chat") return;
+        Dom.flash.style.opacity = 0; AppState.currentPage = "chat"; AppState.currentPhilosopher = null; AppState.growthProgress = 0; AppState.conversationHistory = [];
+        Dom.chatPage.classList.add("inner-enter");
+        Dom.homeCanvas.style.display = "none";
+        Dom.homePage.classList.remove("active"); Dom.saveBtn.style.display = ""; Dom.homeBtn.style.display = "";
+        requestAnimationFrame(()=>Dom.chatPage.classList.add("active"));
+        setTimeout(()=>Dom.chatPage.classList.remove("inner-enter"), 540);
+        setTimeout(()=>document.body.classList.remove("home-transitioning"), 520);
+        if (this.home) { this.home.destroy(); this.home = null; }
+        this.tree = new TreeEngine(Dom.treeCanvas); this.tree.start(); this.chat.reset(); setTimeout(()=>Dom.userInput.focus(), 350);
+      },
+      goHome() {
+        AppState.currentPage = "home"; AppState.currentPhilosopher = null; AppState.growthProgress = 0; AppState.conversationHistory = [];
+        Dom.homeCanvas.style.display = "";
+        Dom.chatPage.classList.remove("active","inner-enter"); Dom.homePage.classList.add("active"); Dom.saveBtn.style.display = "none"; Dom.homeBtn.style.display = "none"; Dom.messages.innerHTML = "";
+        if (this.tree) { this.tree.destroy(); this.tree = null; }
+        this.home = new HomeCollisionEffect(Dom.homeCanvas, () => this.goChat()); this.home.startLoop();
+      },
+      resize() { if (this.home) this.home.resize(); if (this.tree) this.tree.resize(); },
+      visibility() { const hidden=document.visibilityState==="hidden"; if(this.home)(hidden?this.home.stop():this.home.startLoop()); if(this.tree)(hidden?this.tree.stop():this.tree.start()); },
+      degradeParticles() { if(this.home)this.home.reduceParticles(PerfConfig.degradeRatio); if(this.tree)this.tree.reduceParticles(PerfConfig.degradeRatio); showToast("已自动降低粒子数量以保持流畅"); },
+      async saveCard() {
+        try {
+          const config = AppState.currentPhilosopher || Philosophy.configs[0];
+          if (this.tree) this.tree.crystallize();
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const treeImage = this.tree ? this.tree.getImageData() : "";
+          const quote = config.card_quote_pool[(Math.random()*config.card_quote_pool.length)|0];
+          const start = performance.now();
+          this.lastCard = await this.card.generateCard(config, treeImage, quote);
+          if (performance.now() - start > 500) Log.warn("卡片生成超过 500ms");
+          this.modal.show(this.lastCard);
+        } catch (err) {
+          console.error(err);
+          showToast("生成失败，请重试");
+        }
+      }
+    };
+
+    /** 初始化完整应用。 */
+    window.addEventListener("DOMContentLoaded", () => App.init(), { once:true });
+
+    /** 公共 API：匹配哲学家。 */
+    window.matchPhilosopher = Philosophy.matchPhilosopher;
+    /** 公共 API：生成卡片。 */
+    window.generateCard = (philosopherConfig, treeImageData, quote) => App.card.generateCard(philosopherConfig, treeImageData, quote);
+    /** 公共 API：获取树截图。 */
+    window.getTreeImageData = () => App.tree ? App.tree.getImageData() : "";
+    /** 公共 API：触发树结晶。 */
+    window.triggerCrystallize = () => App.tree && App.tree.crystallize();
+    window.AppState = AppState;
+  </script>
+</body>
+</html>

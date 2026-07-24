@@ -1,0 +1,1062 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>粒子生命树引擎</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #0f172a;
+      font-family: "Noto Serif SC", "Microsoft YaHei", sans-serif;
+      color: rgba(255, 255, 255, 0.88);
+      user-select: none;
+    }
+
+    #treeCanvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      background: #0f172a;
+    }
+
+    .toolbar {
+      position: fixed;
+      left: 50%;
+      bottom: max(14px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      width: min(1120px, calc(100vw - 24px));
+      display: grid;
+      gap: 10px;
+      z-index: 2;
+      pointer-events: auto;
+    }
+
+    .buttons {
+      display: grid;
+      grid-template-columns: repeat(10, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    button {
+      min-height: 34px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.72);
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 13px;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+    }
+
+    button.active {
+      border-color: rgba(255, 255, 255, 0.7);
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
+    }
+
+    .sliderRow {
+      display: grid;
+      grid-template-columns: 60px 1fr 48px 82px;
+      align-items: center;
+      gap: 10px;
+      min-height: 40px;
+      padding: 0 10px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.64);
+      backdrop-filter: blur(10px);
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: #00bfff;
+    }
+
+    #valueLabel,
+    .sliderRow label {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.74);
+    }
+
+    #crystalBtn {
+      min-height: 30px;
+    }
+
+    #fps {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      z-index: 3;
+      color: rgba(255, 255, 255, 0.48);
+      font: 12px/1.4 Consolas, Monaco, monospace;
+      pointer-events: none;
+    }
+
+    @media (max-width: 760px) {
+      .buttons {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+
+      .sliderRow {
+        grid-template-columns: 48px 1fr 42px;
+      }
+
+      #crystalBtn {
+        grid-column: 1 / -1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="treeCanvas" aria-hidden="true"></canvas>
+  <div class="toolbar">
+    <div class="buttons" id="buttons"></div>
+    <div class="sliderRow">
+      <label for="progress">生长</label>
+      <input id="progress" type="range" min="0" max="100" value="86">
+      <span id="valueLabel">86</span>
+      <button id="crystalBtn" type="button">结晶</button>
+    </div>
+  </div>
+  <div id="fps">FPS 60</div>
+
+  <script>
+    "use strict";
+
+    /*
+      粒子生命树引擎
+      ------------------------------------------------------------
+      性能约束落实：
+      1. POOL_SIZE 固定为 200，所有粒子初始化时创建，运行中不 new/delete。
+      2. 动画帧里不用 clearRect，只用 rgba(15,23,42,0.08) 覆盖产生拖尾。
+      3. sin/cos/random 全部预计算进 Float32Array，帧内只做索引读取。
+      4. render 循环内无 DOM 查询、无数组 push/pop、无字符串拼接。
+      5. document.visibilityState 为 hidden 时停止 requestAnimationFrame。
+      6. UI 事件可更新 DOM；主渲染循环只更新 canvas 与已缓存 fps 节点。
+    */
+
+    const POOL_SIZE = 200;
+    const LUT_SIZE = 4096;
+    const LUT_MASK = LUT_SIZE - 1;
+    const TAU = Math.PI * 2;
+    const BASE_BG = "rgba(15, 23, 42, 0.08)";
+    const DPR_LIMIT = 2;
+    const FPS_TEXTS = new Array(181);
+
+    for (let i = 0; i < FPS_TEXTS.length; i++) {
+      FPS_TEXTS[i] = "FPS " + i;
+    }
+
+    const TRAJECTORY = {
+      straight: 0,
+      fluid: 1,
+      curve: 2,
+      spiral: 3,
+      pyramid: 4,
+      stack: 5,
+      lightning: 6,
+      sway: 7,
+      pendulum: 8,
+      network: 9
+    };
+
+    const BLOOM = {
+      breath: 0,
+      butterfly: 1,
+      petal: 2,
+      yinyang: 3,
+      canopy: 4,
+      stillness: 5,
+      explosion: 6,
+      boulder: 7,
+      mist: 8,
+      crystal: 9
+    };
+
+    /*
+      对外配置：10 位哲学家的颜色、轨迹和繁茂特效。
+      页面按钮和引擎初始化都读取这份配置。
+    */
+    const TREE_CONFIGS = {
+      wangYangming: {
+        name: "王阳明",
+        color: "#87CEEB",
+        secondary: "#ffffff",
+        trajectory: "straight",
+        bloom: "breath"
+      },
+      zhuangzi: {
+        name: "庄子",
+        color: "#2F4F4F",
+        secondary: "#8fbc8f",
+        trajectory: "fluid",
+        bloom: "butterfly"
+      },
+      sushi: {
+        name: "苏轼",
+        color: "#FFA500",
+        secondary: "#ff6347",
+        trajectory: "curve",
+        bloom: "petal"
+      },
+      laozi: {
+        name: "老子",
+        color: "#006994",
+        secondary: "#87ceeb",
+        trajectory: "spiral",
+        bloom: "yinyang"
+      },
+      kongmeng: {
+        name: "孔孟",
+        color: "#8B4513",
+        secondary: "#daa520",
+        trajectory: "pyramid",
+        bloom: "canopy"
+      },
+      aurelius: {
+        name: "奥勒留",
+        color: "#F0F8FF",
+        secondary: "#c0c0c0",
+        trajectory: "stack",
+        bloom: "stillness"
+      },
+      nietzsche: {
+        name: "尼采",
+        color: "#8B0000",
+        secondary: "#ffd700",
+        trajectory: "lightning",
+        bloom: "explosion"
+      },
+      camus: {
+        name: "加缪",
+        color: "#EDC9AF",
+        secondary: "#8b7355",
+        trajectory: "sway",
+        bloom: "boulder"
+      },
+      schopenhauer: {
+        name: "叔本华",
+        color: "#4B0082",
+        secondary: "#9370db",
+        trajectory: "pendulum",
+        bloom: "mist"
+      },
+      adler: {
+        name: "阿德勒",
+        color: "#00BFFF",
+        secondary: "#ffffff",
+        trajectory: "network",
+        bloom: "crystal"
+      }
+    };
+
+    const CONFIG_IDS = [
+      "wangYangming",
+      "zhuangzi",
+      "sushi",
+      "laozi",
+      "kongmeng",
+      "aurelius",
+      "nietzsche",
+      "camus",
+      "schopenhauer",
+      "adler"
+    ];
+
+    const CONFIG_NAMES = [
+      "王阳明",
+      "庄子",
+      "苏轼",
+      "老子",
+      "孔孟",
+      "奥勒留",
+      "尼采",
+      "加缪",
+      "叔本华",
+      "阿德勒"
+    ];
+
+    /*
+      固定种子随机数。只在初始化查表和初始化粒子时使用。
+      运行中读取 randomLut，从而避免 Math.random 带来的不可控成本。
+    */
+    function seededRandomFactory(seed) {
+      let value = seed >>> 0;
+      return function rand() {
+        value = (value * 1664525 + 1013904223) >>> 0;
+        return value / 4294967296;
+      };
+    }
+
+    const rand = seededRandomFactory(20260709);
+    const sinLut = new Float32Array(LUT_SIZE);
+    const cosLut = new Float32Array(LUT_SIZE);
+    const randomLut = new Float32Array(LUT_SIZE);
+    const noiseLut = new Float32Array(LUT_SIZE);
+
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const angle = (i / LUT_SIZE) * TAU;
+      sinLut[i] = Math.sin(angle);
+      cosLut[i] = Math.cos(angle);
+      randomLut[i] = rand();
+    }
+
+    /*
+      简化连续噪声：多个低频正弦叠加。
+      它不是完整 Perlin Noise，但视觉上连续、柔和，适合 fluid/curve/sway。
+    */
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const angle = (i / LUT_SIZE) * TAU;
+      noiseLut[i] =
+        Math.sin(angle * 1.0 + 0.31) * 0.50 +
+        Math.sin(angle * 2.7 + 1.80) * 0.32 +
+        Math.sin(angle * 5.1 + 2.40) * 0.18;
+    }
+
+    function lut(value) {
+      return (value | 0) & LUT_MASK;
+    }
+
+    function clamp01(value) {
+      return value < 0 ? 0 : value > 1 ? 1 : value;
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function easeOutCubic(t) {
+      const inv = 1 - t;
+      return 1 - inv * inv * inv;
+    }
+
+    function hexToRgb(hex) {
+      const n = parseInt(hex.slice(1), 16);
+      return {
+        r: (n >> 16) & 255,
+        g: (n >> 8) & 255,
+        b: n & 255
+      };
+    }
+
+    /*
+      Particle 类：对象池元素。
+      注意：类只在 initTree 阶段实例化 200 次；动画运行期间只改字段。
+    */
+    class Particle {
+      constructor(index) {
+        const r1 = randomLut[lut(index * 17 + 3)];
+        const r2 = randomLut[lut(index * 29 + 11)];
+        const r3 = randomLut[lut(index * 47 + 23)];
+
+        this.index = index;
+        this.x = 0;
+        this.y = 0;
+        this.vx = 0;
+        this.vy = 0;
+        this.tx = 0;
+        this.ty = 0;
+        this.freezeX = 0;
+        this.freezeY = 0;
+        this.seedA = r1;
+        this.seedB = r2;
+        this.seedC = r3;
+        this.phase = (r1 * LUT_SIZE) | 0;
+        this.phase2 = (r2 * LUT_SIZE) | 0;
+        this.branch = r1 > 0.5 ? 1 : -1;
+        this.layer = index / (POOL_SIZE - 1);
+        this.radius = 1.6 + r3 * 2.0;
+        this.opacity = 0.65;
+        this.colorMix = r2;
+      }
+    }
+
+    /*
+      TrajectoryCalculator：10 种生长轨迹。
+      所有函数只写入粒子的 tx/ty，不创建临时对象。
+      x/y 公式以画布底部中心为根，grow 表示 0-1 的生长量。
+    */
+    const TrajectoryCalculator = {
+      compute(type, particle, engine, grow, timeIndex) {
+        if (type === TRAJECTORY.straight) {
+          this.straight(particle, engine, grow, timeIndex);
+        } else if (type === TRAJECTORY.fluid) {
+          this.fluid(particle, engine, grow, timeIndex);
+        } else if (type === TRAJECTORY.curve) {
+          this.curve(particle, engine, grow, timeIndex);
+        } else if (type === TRAJECTORY.spiral) {
+          this.spiral(particle, engine, grow, timeIndex);
+        } else if (type === TRAJECTORY.pyramid) {
+          this.pyramid(particle, engine, grow, timeIndex);
+        } else if (type === TRAJECTORY.stack) {
+          this.stack(particle, engine, grow, timeIndex);
+        } else if (type === TRAJECTORY.lightning) {
+          this.lightning(particle, engine, grow, timeIndex);
+        } else if (type === TRAJECTORY.sway) {
+          this.sway(particle, engine, grow, timeIndex);
+        } else if (type === TRAJECTORY.pendulum) {
+          this.pendulum(particle, engine, grow, timeIndex);
+        } else {
+          this.network(particle, engine, grow, timeIndex);
+        }
+      },
+
+      straight(p, e, grow, t) {
+        const h = e.treeHeight * grow;
+        const yNorm = p.layer;
+        const bambooNode = ((p.index % 12) - 6) * 0.9;
+        const side = p.branch * Math.max(4, yNorm * 32);
+        p.tx = e.rootX + side * p.seedB + bambooNode;
+        p.ty = e.rootY - h * yNorm;
+      },
+
+      fluid(p, e, grow, t) {
+        const h = e.treeHeight * grow * 0.88;
+        const angleIdx = lut(p.phase + t * 0.7);
+        const radius = (35 + 190 * p.layer) * grow;
+        p.tx = e.rootX + cosLut[angleIdx] * radius * (0.45 + p.seedB);
+        p.ty = e.rootY - h * p.layer + sinLut[lut(p.phase2 + t)] * radius * 0.42;
+      },
+
+      curve(p, e, grow, t) {
+        const yNorm = p.layer;
+        const h = e.treeHeight * grow;
+        const trunkBend = noiseLut[lut(yNorm * 1200 + t * 0.25)] * 70 * yNorm;
+        const branchSpread = p.branch * yNorm * yNorm * 170 * p.seedB * grow;
+        p.tx = e.rootX + trunkBend + branchSpread;
+        p.ty = e.rootY - h * yNorm + noiseLut[lut(p.phase + t)] * 14;
+      },
+
+      spiral(p, e, grow, t) {
+        const yNorm = p.layer;
+        const h = e.treeHeight * grow;
+        const angleIdx = lut(p.phase + yNorm * 1600 + t * 0.35);
+        const radius = (18 + yNorm * 120) * grow;
+        p.tx = e.rootX + cosLut[angleIdx] * radius;
+        p.ty = e.rootY - h * yNorm + sinLut[angleIdx] * 24;
+      },
+
+      pyramid(p, e, grow, t) {
+        const yNorm = p.layer;
+        const h = e.treeHeight * grow;
+        const maxHalf = 190 * (1 - yNorm) * grow;
+        const lane = ((p.index % 17) / 16 - 0.5) * 2;
+        p.tx = e.rootX + lane * maxHalf;
+        p.ty = e.rootY - h * yNorm;
+      },
+
+      stack(p, e, grow, t) {
+        const yNorm = p.layer;
+        const h = e.treeHeight * grow;
+        const column = ((p.index % 9) - 4) * 8;
+        const capital = yNorm > 0.82 ? ((p.index % 21) - 10) * 6 : 0;
+        p.tx = e.rootX + column + capital;
+        p.ty = e.rootY - h * yNorm;
+      },
+
+      lightning(p, e, grow, t) {
+        const yNorm = p.layer;
+        const h = e.treeHeight * grow;
+        const segment = ((yNorm * 8) | 0);
+        const jag = (randomLut[lut(segment * 71 + p.index * 13)] - 0.5) * 170 * grow;
+        const burst = p.branch * p.seedC * yNorm * 120 * grow;
+        p.tx = e.rootX + jag + burst;
+        p.ty = e.rootY - h * yNorm + noiseLut[lut(p.phase + t * 2)] * 10;
+      },
+
+      sway(p, e, grow, t) {
+        const yNorm = p.layer;
+        const h = e.treeHeight * grow * 0.9;
+        const sway = sinLut[lut(t * 0.8 + yNorm * 900)] * 45 * yNorm;
+        const rubble = ((p.index % 13) - 6) * (1 - yNorm) * 5;
+        p.tx = e.rootX + sway + rubble + p.branch * yNorm * 60 * p.seedB;
+        p.ty = e.rootY - h * yNorm + Math.max(0, noiseLut[lut(p.phase + t)] * 22 * (1 - grow));
+      },
+
+      pendulum(p, e, grow, t) {
+        const yNorm = p.layer;
+        const h = e.treeHeight * grow;
+        const pause = randomLut[lut((t * 0.08) | 0)] > 0.23 ? 1 : 0.88;
+        const swing = sinLut[lut(t * 0.55)] * 100 * yNorm * pause;
+        p.tx = e.rootX + swing + p.branch * yNorm * 38 * p.seedB;
+        p.ty = e.rootY - h * yNorm * pause;
+      },
+
+      network(p, e, grow, t) {
+        const yNorm = p.layer;
+        const ring = ((p.index % 40) / 40) * TAU;
+        const ringIdx = lut((ring / TAU) * LUT_SIZE + t * 0.22);
+        const radius = (35 + ((p.index / 40) | 0) * 32) * grow;
+        p.tx = e.rootX + cosLut[ringIdx] * radius * (0.8 + yNorm);
+        p.ty = e.rootY - e.treeHeight * grow * yNorm + sinLut[ringIdx] * radius * 0.38;
+      }
+    };
+
+    /*
+      BloomEffectRenderer：繁茂阶段专属特效。
+      特效只使用现有粒子和 canvas 绘制命令，不额外创建粒子。
+    */
+    const BloomEffectRenderer = {
+      render(type, ctx, engine, amount, timeIndex) {
+        if (amount <= 0.001) return;
+        if (type === BLOOM.breath) {
+          this.breath(ctx, engine, amount, timeIndex);
+        } else if (type === BLOOM.butterfly) {
+          this.butterfly(ctx, engine, amount, timeIndex);
+        } else if (type === BLOOM.petal) {
+          this.petal(ctx, engine, amount, timeIndex);
+        } else if (type === BLOOM.yinyang) {
+          this.yinyang(ctx, engine, amount, timeIndex);
+        } else if (type === BLOOM.canopy) {
+          this.canopy(ctx, engine, amount, timeIndex);
+        } else if (type === BLOOM.stillness) {
+          this.stillness(ctx, engine, amount);
+        } else if (type === BLOOM.explosion) {
+          this.explosion(ctx, engine, amount, timeIndex);
+        } else if (type === BLOOM.boulder) {
+          this.boulder(ctx, engine, amount, timeIndex);
+        } else if (type === BLOOM.mist) {
+          this.mist(ctx, engine, amount);
+        } else {
+          this.crystal(ctx, engine, amount, timeIndex);
+        }
+      },
+
+      breath(ctx, e, amount, t) {
+        const pulse = 0.45 + sinLut[lut(t * 1.2)] * 0.25;
+        ctx.save();
+        ctx.globalAlpha = amount * pulse;
+        ctx.strokeStyle = e.secondaryRgbaSoft;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(e.rootX, e.rootY - e.treeHeight * 0.55, 150 + pulse * 28, 0, TAU);
+        ctx.stroke();
+        ctx.restore();
+      },
+
+      butterfly(ctx, e, amount, t) {
+        const cx = e.rootX;
+        const cy = e.rootY - e.treeHeight * 0.55;
+        const flap = 0.85 + sinLut[lut(t * 2)] * 0.2;
+        ctx.save();
+        ctx.globalAlpha = amount * 0.28;
+        ctx.fillStyle = e.secondaryRgba;
+        ctx.beginPath();
+        ctx.ellipse(cx - 46, cy, 54 * flap, 76, -0.45, 0, TAU);
+        ctx.ellipse(cx + 46, cy, 54 * flap, 76, 0.45, 0, TAU);
+        ctx.fill();
+        ctx.restore();
+      },
+
+      petal(ctx, e, amount, t) {
+        ctx.save();
+        ctx.globalAlpha = amount * 0.58;
+        ctx.fillStyle = e.secondaryRgba;
+        for (let i = 0; i < 24; i++) {
+          const phase = lut(t * 1.3 + i * 137);
+          const x = e.rootX + (randomLut[lut(i * 41)] - 0.5) * 360 + sinLut[phase] * 22;
+          const y = e.rootY - e.treeHeight * 0.72 + ((t * 0.35 + i * 31) % 260);
+          ctx.beginPath();
+          ctx.ellipse(x, y, 3, 8, sinLut[phase], 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+      },
+
+      yinyang(ctx, e, amount, t) {
+        const cx = e.rootX;
+        const cy = e.rootY - e.treeHeight * 0.68;
+        const rot = t * 0.0009;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(rot);
+        ctx.globalAlpha = amount * 0.55;
+        ctx.strokeStyle = e.secondaryRgba;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 86, 0, TAU);
+        ctx.moveTo(0, -86);
+        ctx.bezierCurveTo(58, -42, -58, 42, 0, 86);
+        ctx.stroke();
+        ctx.restore();
+      },
+
+      canopy(ctx, e, amount, t) {
+        ctx.save();
+        ctx.globalAlpha = amount * 0.22;
+        ctx.fillStyle = e.secondaryRgba;
+        ctx.beginPath();
+        ctx.ellipse(e.rootX, e.rootY - e.treeHeight * 0.72, 245, 76, 0, 0, TAU);
+        ctx.fill();
+        ctx.restore();
+      },
+
+      stillness(ctx, e, amount) {
+        ctx.save();
+        ctx.globalAlpha = amount * 0.42;
+        ctx.strokeStyle = e.secondaryRgba;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(e.rootX - 54, e.rootY - e.treeHeight * 0.92, 108, e.treeHeight * 0.82);
+        ctx.restore();
+      },
+
+      explosion(ctx, e, amount, t) {
+        ctx.save();
+        ctx.globalAlpha = amount * 0.65;
+        ctx.strokeStyle = e.secondaryRgba;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < 36; i++) {
+          const a = lut(i * 113 + t * 2.2);
+          const len = 80 + randomLut[lut(i * 67)] * 110;
+          const cx = e.rootX;
+          const cy = e.rootY - e.treeHeight * 0.62;
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(cx + cosLut[a] * len, cy + sinLut[a] * len);
+        }
+        ctx.stroke();
+        ctx.restore();
+      },
+
+      boulder(ctx, e, amount, t) {
+        const cx = e.rootX + sinLut[lut(t * 0.45)] * 8;
+        const cy = e.rootY - e.treeHeight * 0.84;
+        ctx.save();
+        ctx.globalAlpha = amount * 0.72;
+        ctx.strokeStyle = e.secondaryRgba;
+        ctx.fillStyle = e.primaryRgbaSoft;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 44);
+        ctx.lineTo(cx + 54, cy - 10);
+        ctx.lineTo(cx + 35, cy + 42);
+        ctx.lineTo(cx - 42, cy + 34);
+        ctx.lineTo(cx - 58, cy - 16);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      },
+
+      mist(ctx, e, amount) {
+        ctx.save();
+        ctx.globalAlpha = amount * 0.52;
+        ctx.strokeStyle = "rgba(255,255,255,0.86)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(e.rootX, e.rootY - e.treeHeight * 0.52);
+        ctx.lineTo(e.rootX, e.rootY - e.treeHeight * 0.98);
+        ctx.stroke();
+        ctx.restore();
+      },
+
+      crystal(ctx, e, amount, t) {
+        const cx = e.rootX;
+        const cy = e.rootY - e.treeHeight * 0.66;
+        ctx.save();
+        ctx.globalAlpha = amount * 0.36;
+        ctx.strokeStyle = e.secondaryRgba;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < 14; i++) {
+          const a = lut(i * 293 + t * 0.35);
+          const x = cx + cosLut[a] * 150;
+          const y = cy + sinLut[a] * 92;
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(x, y);
+          ctx.arc(x, y, 3, 0, TAU);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+    };
+
+    class TreeEngine {
+      constructor(canvasElement, philosopherId) {
+        this.canvas = canvasElement;
+        this.ctx = canvasElement.getContext("2d", { alpha: false });
+        this.pool = new Array(POOL_SIZE);
+        for (let i = 0; i < POOL_SIZE; i++) {
+          this.pool[i] = new Particle(i);
+        }
+
+        this.width = 1;
+        this.height = 1;
+        this.dpr = 1;
+        this.rootX = 0;
+        this.rootY = 0;
+        this.treeHeight = 0;
+        this.frame = 0;
+        this.targetProgress = 86;
+        this.currentProgress = 86;
+        this.crystallizing = false;
+        this.crystallizeStart = 0;
+        this.crystallizeDone = false;
+        this.motionScale = 1;
+        this.running = false;
+        this.rafId = 0;
+        this.lastNow = performance.now();
+        this.fpsFrames = 0;
+        this.fpsTime = this.lastNow;
+        this.fpsNode = document.getElementById("fps");
+
+        this.config = TREE_CONFIGS.wangYangming;
+        this.trajectoryType = TRAJECTORY.straight;
+        this.bloomType = BLOOM.breath;
+        this.primaryRgba = "rgba(135,206,235,0.92)";
+        this.primaryRgbaSoft = "rgba(135,206,235,0.18)";
+        this.secondaryRgba = "rgba(255,255,255,0.86)";
+        this.secondaryRgbaSoft = "rgba(255,255,255,0.28)";
+
+        this.setConfig(philosopherId || "wangYangming");
+        this.resize();
+      }
+
+      setConfig(philosopherId) {
+        const nextConfig = TREE_CONFIGS[philosopherId] || TREE_CONFIGS.wangYangming;
+        this.config = nextConfig;
+        this.trajectoryType = TRAJECTORY[nextConfig.trajectory];
+        this.bloomType = BLOOM[nextConfig.bloom];
+
+        const primary = hexToRgb(nextConfig.color);
+        const secondary = hexToRgb(nextConfig.secondary);
+        this.primaryRgba = "rgba(" + primary.r + "," + primary.g + "," + primary.b + ",0.92)";
+        this.primaryRgbaSoft = "rgba(" + primary.r + "," + primary.g + "," + primary.b + ",0.18)";
+        this.secondaryRgba = "rgba(" + secondary.r + "," + secondary.g + "," + secondary.b + ",0.86)";
+        this.secondaryRgbaSoft = "rgba(" + secondary.r + "," + secondary.g + "," + secondary.b + ",0.28)";
+        this.crystallizing = false;
+        this.crystallizeDone = false;
+        this.motionScale = 1;
+      }
+
+      resize() {
+        this.dpr = Math.min(window.devicePixelRatio || 1, DPR_LIMIT);
+        this.width = Math.max(1, window.innerWidth);
+        this.height = Math.max(1, window.innerHeight);
+        this.canvas.width = Math.floor(this.width * this.dpr);
+        this.canvas.height = Math.floor(this.height * this.dpr);
+        this.canvas.style.width = this.width + "px";
+        this.canvas.style.height = this.height + "px";
+        this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        this.rootX = this.width * 0.5;
+        this.rootY = this.height * 0.85;
+        this.treeHeight = this.height * 0.58;
+        this.ctx.fillStyle = "#0f172a";
+        this.ctx.fillRect(0, 0, this.width, this.height);
+        this.resetParticlesToRoot();
+      }
+
+      resetParticlesToRoot() {
+        for (let i = 0; i < POOL_SIZE; i++) {
+          const p = this.pool[i];
+          const angle = lut(p.phase);
+          const radius = randomLut[lut(p.phase2)] * 30;
+          p.x = this.rootX + cosLut[angle] * radius;
+          p.y = this.rootY + sinLut[angle] * radius;
+          p.vx = 0;
+          p.vy = 0;
+          p.tx = p.x;
+          p.ty = p.y;
+          p.freezeX = p.x;
+          p.freezeY = p.y;
+        }
+      }
+
+      setProgress(value) {
+        const n = Number(value);
+        this.targetProgress = n < 0 ? 0 : n > 100 ? 100 : n;
+        if (this.targetProgress < 100) {
+          this.crystallizing = false;
+          this.crystallizeDone = false;
+          this.motionScale = 1;
+        }
+      }
+
+      triggerCrystallize() {
+        if (this.crystallizing || this.crystallizeDone) return;
+        this.targetProgress = 100;
+        this.currentProgress = Math.max(this.currentProgress, 99.5);
+        this.crystallizing = true;
+        this.crystallizeStart = performance.now();
+        this.crystallizeDone = false;
+        for (let i = 0; i < POOL_SIZE; i++) {
+          const p = this.pool[i];
+          p.freezeX = p.x;
+          p.freezeY = p.y;
+        }
+      }
+
+      start() {
+        if (this.running) return;
+        this.running = true;
+        this.rafId = requestAnimationFrame(this.loopBound || (this.loopBound = this.loop.bind(this)));
+      }
+
+      stop() {
+        this.running = false;
+        cancelAnimationFrame(this.rafId);
+      }
+
+      loop(now) {
+        if (!this.running) return;
+        this.render(now);
+        this.rafId = requestAnimationFrame(this.loopBound);
+      }
+
+      render(now) {
+        this.frame++;
+        const t = this.frame;
+
+        /*
+          进度平滑：
+          外部 setProgress 只改 targetProgress，内部用 lerp 追随。
+          这样滑块突然跳动时，树不会瞬移。
+        */
+        this.currentProgress = lerp(this.currentProgress, this.targetProgress, 0.075);
+
+        if (this.crystallizing) {
+          const elapsed = now - this.crystallizeStart;
+          const k = clamp01(elapsed / 2000);
+          this.motionScale = 1 - easeOutCubic(k);
+          this.currentProgress = 100;
+          if (k >= 1 && !this.crystallizeDone) {
+            this.crystallizeDone = true;
+            this.motionScale = 0;
+            window.onCrystallizeComplete();
+          }
+        }
+
+        this.ctx.globalCompositeOperation = "source-over";
+        this.ctx.globalAlpha = 1;
+        this.ctx.fillStyle = BASE_BG;
+        this.ctx.fillRect(0, 0, this.width, this.height);
+
+        const progress = this.currentProgress;
+        const stage1 = progress <= 20;
+        const sprout = clamp01(progress / 20);
+        const trunkGrow = clamp01((progress - 20) / 30);
+        const leafGrow = clamp01((progress - 50) / 30);
+        const bloomAmount = clamp01((progress - 80) / 20);
+        const grow = progress < 20 ? sprout * 0.08 : progress < 50 ? trunkGrow * 0.62 : 0.62 + leafGrow * 0.38;
+        const shadowBlur = 5 + bloomAmount * 10 + leafGrow * 6;
+
+        /*
+          阶段 1 萌芽：
+          所有粒子在底部 30px 光团内布朗运动。
+          布朗偏移来自 randomLut/noiseLut 查表，不使用运行时 random。
+        */
+        for (let i = 0; i < POOL_SIZE; i++) {
+          const p = this.pool[i];
+
+          if (stage1) {
+            const a = lut(p.phase + t * 3);
+            const brownX = noiseLut[lut(p.phase + t * 5)] * 2;
+            const brownY = noiseLut[lut(p.phase2 + t * 4)] * 2;
+            const radius = 30 * p.seedB * (0.62 + sprout * 0.38);
+            p.tx = this.rootX + cosLut[a] * radius + brownX;
+            p.ty = this.rootY + sinLut[a] * radius + brownY;
+          } else {
+            TrajectoryCalculator.compute(this.trajectoryType, p, this, grow, t);
+
+            /*
+              阶段 3 散叶：
+              从主干向两侧展开。leafGrow 越高，侧向展开越明显。
+              branch 是初始化时固定的左右方向，避免每帧随机。
+            */
+            if (progress > 50) {
+              const side = p.branch * leafGrow * p.layer * p.layer * (90 + p.seedC * 120);
+              const flutter = noiseLut[lut(p.phase2 + t * 1.6)] * 18 * leafGrow;
+              p.tx += side + flutter;
+              p.ty += noiseLut[lut(p.phase + t)] * 12 * leafGrow;
+            }
+          }
+
+          /*
+            速度分段：
+            萌芽慢，抽枝约 1-2px/frame，散叶约 2-3px/frame。
+            这里用位置追随系数模拟速度，既平滑又省计算。
+          */
+          let follow = 0.035;
+          if (progress > 20 && progress <= 50) follow = 0.075;
+          if (progress > 50 && progress < 100) follow = 0.115;
+          follow *= this.motionScale;
+
+          if (this.crystallizing) {
+            p.x = lerp(p.freezeX, p.tx, 1 - this.motionScale);
+            p.y = lerp(p.freezeY, p.ty, 1 - this.motionScale);
+          } else {
+            p.x += (p.tx - p.x) * follow;
+            p.y += (p.ty - p.y) * follow;
+          }
+
+          const breath = 0.5 + sinLut[lut(t * 2 + p.phase)] * 0.5;
+          p.opacity = stage1 ? 0.3 + breath * 0.4 : 0.48 + leafGrow * 0.25 + bloomAmount * 0.22;
+        }
+
+        this.drawConnections(leafGrow, bloomAmount);
+        this.drawParticles(shadowBlur, t);
+        BloomEffectRenderer.render(this.bloomType, this.ctx, this, bloomAmount, t);
+        this.updateFps(now);
+      }
+
+      drawParticles(shadowBlur, t) {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.shadowBlur = shadowBlur;
+        ctx.shadowColor = this.config.color;
+
+        for (let i = 0; i < POOL_SIZE; i++) {
+          const p = this.pool[i];
+          ctx.globalAlpha = p.opacity;
+          ctx.fillStyle = p.colorMix > 0.72 ? this.secondaryRgba : this.primaryRgba;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.radius, 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      drawConnections(leafGrow, bloomAmount) {
+        /*
+          network/crystal 类型需要点线结构。
+          连接采用固定步长邻接，不做 O(n^2) 搜索，成本恒定。
+        */
+        if (this.trajectoryType !== TRAJECTORY.network && this.bloomType !== BLOOM.crystal) return;
+
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.globalAlpha = 0.16 + bloomAmount * 0.20;
+        ctx.strokeStyle = this.secondaryRgba;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < POOL_SIZE - 5; i += 2) {
+          const a = this.pool[i];
+          const b = this.pool[i + 5];
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      updateFps(now) {
+        this.fpsFrames++;
+        if (now - this.fpsTime > 500) {
+          const fps = Math.round(this.fpsFrames * 1000 / (now - this.fpsTime));
+          this.fpsNode.textContent = FPS_TEXTS[fps < 0 ? 0 : fps > 180 ? 180 : fps];
+          this.fpsFrames = 0;
+          this.fpsTime = now;
+        }
+      }
+
+      getImageData() {
+        return this.canvas.toDataURL("image/png");
+      }
+    }
+
+    const canvas = document.getElementById("treeCanvas");
+    const progressInput = document.getElementById("progress");
+    const valueLabel = document.getElementById("valueLabel");
+    const buttonsNode = document.getElementById("buttons");
+    const crystalBtn = document.getElementById("crystalBtn");
+    const buttonRefs = new Array(CONFIG_IDS.length);
+    let engine = null;
+    let activeIndex = 0;
+
+    /*
+      UI 初始化不属于 render 循环，可以安全创建 DOM。
+      按钮引用缓存到 buttonRefs，切换时不再查询 DOM。
+    */
+    for (let i = 0; i < CONFIG_IDS.length; i++) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = CONFIG_NAMES[i];
+      btn.dataset.index = String(i);
+      if (i === 0) btn.className = "active";
+      buttonRefs[i] = btn;
+      buttonsNode.appendChild(btn);
+    }
+
+    function setActiveButton(index) {
+      buttonRefs[activeIndex].className = "";
+      buttonRefs[index].className = "active";
+      activeIndex = index;
+    }
+
+    buttonsNode.addEventListener("click", function onButtonsClick(event) {
+      const target = event.target;
+      if (!target || target.tagName !== "BUTTON") return;
+      const index = Number(target.dataset.index);
+      setActiveButton(index);
+      engine.setConfig(CONFIG_IDS[index]);
+      engine.resetParticlesToRoot();
+    });
+
+    progressInput.addEventListener("input", function onProgressInput() {
+      const value = Number(progressInput.value);
+      valueLabel.textContent = String(value);
+      setProgress(value);
+    });
+
+    crystalBtn.addEventListener("click", function onCrystalClick() {
+      triggerCrystallize();
+    });
+
+    window.addEventListener("resize", function onResize() {
+      if (engine) engine.resize();
+    }, { passive: true });
+
+    document.addEventListener("visibilitychange", function onVisibilityChange() {
+      if (!engine) return;
+      if (document.visibilityState === "hidden") {
+        engine.stop();
+      } else {
+        engine.start();
+      }
+    });
+
+    /*
+      全局 API：
+      外部页面可以直接调用 initTree / setProgress / triggerCrystallize / getTreeImageData。
+    */
+    window.initTree = function initTree(canvasElement, philosopherId) {
+      if (engine) engine.stop();
+      engine = new TreeEngine(canvasElement, philosopherId);
+      engine.start();
+      return engine;
+    };
+
+    window.setProgress = function setProgress(value) {
+      if (engine) engine.setProgress(value);
+    };
+
+    window.triggerCrystallize = function triggerCrystallize() {
+      if (engine) engine.triggerCrystallize();
+    };
+
+    window.getTreeImageData = function getTreeImageData() {
+      return engine ? engine.getImageData() : "";
+    };
+
+    window.onCrystallizeComplete = function onCrystallizeComplete() {
+      /*
+        卡片截图回调钩子：
+        产品接入时可在这里读取 getTreeImageData() 上传或生成情绪卡片。
+      */
+      console.log("crystallize complete", window.getTreeImageData().slice(0, 32));
+    };
+
+    window.TREE_CONFIGS = TREE_CONFIGS;
+
+    initTree(canvas, "wangYangming");
+    setProgress(Number(progressInput.value));
+  </script>
+</body>
+</html>
