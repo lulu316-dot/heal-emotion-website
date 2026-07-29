@@ -4,6 +4,6 @@ window.API_CONFIG = {
   apiKey: "PASTE_YOUR_API_KEY_HERE",
   model: "mimo-v2.5-pro",
   endpoint: "https://api.xiaomimimo.com/v1/chat/completions",
-  maxOutputTokens: 80,
+  maxOutputTokens: 2048,
   temperature: 0.7
 };

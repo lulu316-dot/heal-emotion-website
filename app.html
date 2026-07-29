@@ -478,7 +478,6 @@
     </div>
   </div>
 
-  <script src="api-config.js"></script>
   <script>
     "use strict";
 
@@ -512,9 +511,8 @@
       homeParticlesDesktop: 200,
       treeParticlesDesktop: 300,
       mobileParticles: 100,
-      lowFpsThreshold: 50,
-      lowFpsDuration: 5000,
-      degradeRatio: 0.7,
+      lowFpsThreshold: 45,
+      highFpsThreshold: 57,
       isMobile: matchMedia("(max-width: 767px)").matches,
       reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches
     };
@@ -574,6 +572,14 @@
       noiseLut[i] = Math.sin(a) * .5 + Math.sin(a * 2.7 + 1.8) * .32 + Math.sin(a * 5.1 + 2.4) * .18;
     }
     function lut(v) { return (v | 0) & LUT_MASK; }
+    // 快速三角：把弧度映射到 LUT 索引，避免每帧上万次 Math.sin/cos。负角靠二进制补码回绕，周期性正确。
+    const ANG = LUT_SIZE / TAU;
+    function fsin(a) { return sinLut[((a * ANG) | 0) & LUT_MASK]; }
+    function fcos(a) { return cosLut[((a * ANG) | 0) & LUT_MASK]; }
+    // 动态星尘配色：索引与 TaijiSystem.init 的 roll 分档一致（0=天蓝 1=金 2=白）。分桶批绘时按此顺序取色。
+    const DUST_COLORS = ["135,206,235", "212,175,55", "255,255,255"];
+    // 动态星尘 alpha 量化：闪烁范围 [.16,.86] 切成 8 档，配合 3 色 = 24 个固定绘制桶。
+    const DUST_ALPHA_MIN = .16, DUST_ALPHA_MAX = .86, DUST_ALPHA_LEVELS = 8;
 
     class PerformanceMonitor {
       constructor(node) {
@@ -583,6 +589,8 @@
         this.lowStart = 0;
         this.fps = 60;
         this.visible = true;
+        this.scale = 1;        // 当前性能档位，1=满配，最低 0.4
+        this.cooldown = 0;     // 调整后冷却的采样窗数，防抖动
         EventHub.on(node, "click", () => {
           this.visible = !this.visible;
           node.classList.toggle("hidden", !this.visible);
@@ -593,23 +601,24 @@
         if (now - this.last >= 500) {
           this.fps = Math.round(this.frames * 1000 / (now - this.last));
           this.node.textContent = "FPS " + this.fps;
-          if (this.fps < PerfConfig.lowFpsThreshold) {
-            if (App.home && App.home.startedAt && now - App.home.startedAt < 30000) {
-              this.lowStart = 0;
-              this.frames = 0;
-              this.last = now;
-              return;
-            }
-            if (!this.lowStart) this.lowStart = now;
-            if (now - this.lowStart > PerfConfig.lowFpsDuration) {
-              App.degradeParticles();
-              this.lowStart = now + 999999;
-            }
-          } else {
-            this.lowStart = 0;
-          }
           this.frames = 0;
           this.last = now;
+          this.adapt(now);
+        }
+      }
+      // 分层自适应：维护 perfScale(0.4~1)，低于下阈降一档、高于上阈且有余量升一档；可升可降，不销毁粒子。
+      // 开场 startedAt 后 2s 宽限（首屏纹理/彗星尚在铺，不据此误判）；每次调整后隔 3 个采样窗再动，避免抖动。
+      adapt(now) {
+        if (App.home && App.home.startedAt && now - App.home.startedAt < 2000) return;
+        if (this.cooldown > 0) { this.cooldown--; return; }
+        let next = this.scale;
+        if (this.fps < PerfConfig.lowFpsThreshold) next = Math.max(0.4, this.scale - 0.15);
+        else if (this.fps > PerfConfig.highFpsThreshold && this.scale < 1) next = Math.min(1, this.scale + 0.1);
+        if (next !== this.scale) {
+          this.scale = next;
+          this.cooldown = 3;
+          App.applyPerfScale(next);
+          Log.info("[Perf] fps:", this.fps, "-> perfScale:", next.toFixed(2));
         }
       }
     }
@@ -617,16 +626,16 @@
     /* ═══════ 模块②：哲学家配置 ═══════ */
     const Philosophy = (() => {
       const configs = [
-        { id:"wangYangming", name:"王阳明", camp:"eastern", initial:"阳", color:"#87CEEB", secondary:"#ffffff", trajectory:"straight", bloom:"breath", slogan:"心上用功，事上见真章。", tags:["焦虑","工作做不完","内耗","拖延","迷茫","想太多","行动困难"], card_quote_pool:["知是行之始，行是知之成。","人须在事上磨，方立得住。","此心光明，亦复何言。"] },
-        { id:"zhuangzi", name:"庄子", camp:"eastern", initial:"庄", color:"#2F4F4F", secondary:"#8fbc8f", trajectory:"fluid", bloom:"butterfly", slogan:"天地很大，别把自己困成一只杯。", tags:["同辈压力","容貌焦虑","内卷","比较","求而不得"], card_quote_pool:["天地与我并生，万物与我为一。","相濡以沫，不如相忘于江湖。","独与天地精神往来。"] },
-        { id:"sushi", name:"苏轼", camp:"eastern", initial:"苏", color:"#FFA500", secondary:"#ff6347", trajectory:"curve", bloom:"petal", slogan:"风雨来时，也可煮茶。", tags:["失恋","低谷","不公","熬不下去","挫折"], card_quote_pool:["一蓑烟雨任平生。","此心安处是吾乡。","人间有味是清欢。"] },
-        { id:"laozi", name:"老子", camp:"eastern", initial:"老", color:"#006994", secondary:"#87ceeb", trajectory:"spiral", bloom:"yinyang", slogan:"少一点用力，多一点顺势。", tags:["控制欲","恐慌未来","争强好胜","失控"], card_quote_pool:["上善若水，水善利万物而不争。","知足不辱，知止不殆。","夫唯不争，故天下莫能与之争。"] },
-        { id:"kongmeng", name:"孔孟", camp:"eastern", initial:"儒", color:"#8B4513", secondary:"#daa520", trajectory:"pyramid", bloom:"canopy", slogan:"立身有道，处世有仁。", tags:["职场委屈","人际纠葛","道德困境","被误解"], card_quote_pool:["己所不欲，勿施于人。","君子和而不同。","穷则独善其身，达则兼济天下。"] },
-        { id:"aurelius", name:"马可·奥勒留", camp:"western", initial:"奥", color:"#F0F8FF", secondary:"#c0c0c0", trajectory:"stack", bloom:"stillness", slogan:"控制你能控制的，其余归于宇宙。", tags:["情绪失控","愤怒","不可控焦虑","焦虑","压力","控制不了","担心","冲动"], card_quote_pool:["你拥有支配心灵的力量。","只关注你能控制之事。","宁静来自判断，而非环境。"] },
-        { id:"nietzsche", name:"尼采", camp:"western", initial:"尼", color:"#8B0000", secondary:"#ffd700", trajectory:"lightning", bloom:"explosion", slogan:"把深渊锻成阶梯。", tags:["虚无主义","抑郁","重大打击","软弱","绝望","想放弃","无力","崩溃"], card_quote_pool:["那些杀不死我的，使我更强大。","成为你自己。","重估一切价值。"] },
-        { id:"camus", name:"加缪", camp:"western", initial:"加", color:"#EDC9AF", secondary:"#8b7355", trajectory:"sway", bloom:"boulder", slogan:"看清荒诞，然后继续生活。", tags:["生活没意思","每天重复","重复","无意义","没意义","荒诞","荒诞感","虚无","麻木"], card_quote_pool:["在隆冬，我终于知道，我身上有一个不可战胜的夏天。","反抗，故我们存在。","人必须想象西西弗斯是幸福的。"] },
-        { id:"schopenhauer", name:"叔本华", camp:"western", initial:"叔", color:"#4B0082", secondary:"#9370db", trajectory:"pendulum", bloom:"mist", slogan:"看破欲望，痛苦便少一半。", tags:["欲望痛苦","痛苦","欲望","物质焦虑","嫉妒","无聊","空虚"], card_quote_pool:["人生是在痛苦和无聊之间摇摆。","欲望是痛苦的根。","减少欲望，便减少枷锁。"] },
-        { id:"adler", name:"阿德勒", camp:"western", initial:"阿", color:"#00BFFF", secondary:"#ffffff", trajectory:"network", bloom:"crystal", slogan:"你不必被别人的期待定义。", tags:["讨好","讨好别人","害怕被讨厌","别人怎么看我","很累","社恐","被绑架","怕被讨厌","不敢拒绝"], card_quote_pool:["一切烦恼皆源于人际关系。","自由就是被别人讨厌的勇气。","课题分离，是温柔的边界。"] }
+        { id:"wangYangming", name:"王阳明", camp:"eastern", initial:"阳", color:"#87CEEB", secondary:"#ffffff", trajectory:"straight", bloom:"breath", slogan:"别在念头里打转，起身做眼前那一件小事。", tags:["焦虑","工作做不完","内耗","拖延","迷茫","想太多","行动困难"], card_quote_pool:["知是行之始，行是知之成。","人须在事上磨，方立得住。","此心光明，亦复何言。"] },
+        { id:"zhuangzi", name:"庄子", camp:"eastern", initial:"庄", color:"#2F4F4F", secondary:"#8fbc8f", trajectory:"fluid", bloom:"butterfly", slogan:"天地那么大，何必把自己困进一只杯子里。", tags:["同辈压力","容貌焦虑","内卷","比较","求而不得"], card_quote_pool:["天地与我并生，万物与我为一。","相濡以沫，不如相忘于江湖。","独与天地精神往来。"] },
+        { id:"sushi", name:"苏轼", camp:"eastern", initial:"苏", color:"#FFA500", secondary:"#ff6347", trajectory:"curve", bloom:"petal", slogan:"风雨打来的时候，也不妨煮一壶茶慢慢等它过去。", tags:["失恋","低谷","不公","熬不下去","挫折"], card_quote_pool:["一蓑烟雨任平生。","此心安处是吾乡。","人间有味是清欢。"] },
+        { id:"laozi", name:"老子", camp:"eastern", initial:"老", color:"#006994", secondary:"#87ceeb", trajectory:"spiral", bloom:"yinyang", slogan:"松开攥紧的手，水自然会替你找到去路。", tags:["控制欲","恐慌未来","争强好胜","失控"], card_quote_pool:["上善若水，水善利万物而不争。","知足不辱，知止不殆。","夫唯不争，故天下莫能与之争。"] },
+        { id:"kongmeng", name:"孔孟", camp:"eastern", initial:"儒", color:"#8B4513", secondary:"#daa520", trajectory:"pyramid", bloom:"canopy", slogan:"守得住分寸，也护得住自己，才是真的仁厚。", tags:["职场委屈","人际纠葛","道德困境","被误解"], card_quote_pool:["己所不欲，勿施于人。","君子和而不同。","穷则独善其身，达则兼济天下。"] },
+        { id:"aurelius", name:"马可·奥勒留", camp:"western", initial:"奥", color:"#F0F8FF", secondary:"#c0c0c0", trajectory:"stack", bloom:"stillness", slogan:"能握住的用心去握，握不住的就交还给天地。", tags:["情绪失控","愤怒","不可控焦虑","焦虑","压力","控制不了","担心","冲动"], card_quote_pool:["你拥有支配心灵的力量。","只关注你能控制之事。","宁静来自判断，而非环境。"] },
+        { id:"nietzsche", name:"尼采", camp:"western", initial:"尼", color:"#8B0000", secondary:"#ffd700", trajectory:"lightning", bloom:"explosion", slogan:"那些没能击垮你的，终将被你踩成向上的台阶。", tags:["虚无主义","抑郁","重大打击","软弱","绝望","想放弃","无力","崩溃"], card_quote_pool:["那些杀不死我的，使我更强大。","成为你自己。","重估一切价值。"] },
+        { id:"camus", name:"加缪", camp:"western", initial:"加", color:"#EDC9AF", secondary:"#8b7355", trajectory:"sway", bloom:"boulder", slogan:"看清了生活的荒诞，依然愿意好好活下去，就是勇气。", tags:["生活没意思","每天重复","重复","无意义","没意义","荒诞","荒诞感","虚无","麻木"], card_quote_pool:["在隆冬，我终于知道，我身上有一个不可战胜的夏天。","反抗，故我们存在。","人必须想象西西弗斯是幸福的。"] },
+        { id:"schopenhauer", name:"叔本华", camp:"western", initial:"叔", color:"#4B0082", secondary:"#9370db", trajectory:"pendulum", bloom:"mist", slogan:"少一分执着于想要，就少一分被欲望磨出的苦。", tags:["欲望痛苦","痛苦","欲望","物质焦虑","嫉妒","无聊","空虚"], card_quote_pool:["人生是在痛苦和无聊之间摇摆。","欲望是痛苦的根。","减少欲望，便减少枷锁。"] },
+        { id:"adler", name:"阿德勒", camp:"western", initial:"阿", color:"#00BFFF", secondary:"#ffffff", trajectory:"network", bloom:"crystal", slogan:"你不必活成别人期待的样子，你的人生你说了算。", tags:["讨好","讨好别人","害怕被讨厌","别人怎么看我","很累","社恐","被绑架","怕被讨厌","不敢拒绝"], card_quote_pool:["一切烦恼皆源于人际关系。","自由就是被别人讨厌的勇气。","课题分离，是温柔的边界。"] }
       ];
       const replies = {
         wangYangming:["我知道你被事压住了。先做眼前一小步，心就会亮一点。知行合一，行处即是心安。","你不是无能，只是心被万念缠住了。取一件最小的事去做。人须在事上磨。","焦虑多半来自未行动的念头。把今日能做的列一件，立刻落下。此心光明，亦复何言。","别急着责备自己。心定下来，手先动起来。知是行之始，行是知之成。","你已经看见困局了，这就是起点。少想十步，先行一步。破心中贼，正在此刻。"],
@@ -713,20 +722,61 @@
         }
       };
       const fallbackCursor = { all:0 };
+      const matchUsage = Object.create(null);
+      const specificSignals = {
+        wangYangming:["拖延","内耗","想太多","做不完","执行不了","行动困难","不知道怎么做"],
+        zhuangzi:["内卷","同辈压力","容貌焦虑","外貌焦虑","不如别人","被比较","求而不得"],
+        sushi:["失恋","人生低谷","熬不下去","心碎","被伤害","倒霉","不公"],
+        laozi:["控制欲","必须掌控","恐慌未来","害怕未来","未来不确定","争强好胜","必须赢"],
+        kongmeng:["职场委屈","人际纠葛","道德困境","被误解","责任冲突","关系破裂"],
+        aurelius:["情绪失控","控制不了情绪","不可控焦虑","愤怒","生气","冲动","烦躁"],
+        nietzsche:["抑郁","软弱","想放弃","绝望","重大打击","崩溃","活不下去","被击垮"],
+        camus:["没意义","无意义","好没意思","生活没意思","荒诞","虚无","每天重复","麻木"],
+        schopenhauer:["欲望痛苦","物质焦虑","嫉妒","欲望","空虚","得不到","不满足"],
+        adler:["讨好","怕被讨厌","害怕被讨厌","别人怎么看我","不敢拒绝","不敢说不","社恐"]
+      };
+      const genericOwners = {
+        wangYangming:["迷茫","行动不了","效率"],
+        zhuangzi:["比较","羡慕","排名"],
+        sushi:["难过","委屈","孤独","挫折"],
+        laozi:["未来","不确定","争强"],
+        kongmeng:["职场","人际","道德","责任","关系"],
+        aurelius:["焦虑","压力","担心","紧张","控制不了","失控"],
+        nietzsche:["无力","失败","低谷"],
+        camus:["重复","空洞"],
+        schopenhauer:["痛苦","无聊","物质"],
+        adler:["评价","边界","迎合"]
+      };
+      function uniqueSignalHits(text, words) {
+        const ordered = (words || []).slice().sort((a,b) => b.length - a.length);
+        const hits = [];
+        for (let i = 0; i < ordered.length; i++) {
+          const word = ordered[i];
+          if (text.indexOf(word) < 0) continue;
+          let overlaps = false;
+          for (let j = 0; j < hits.length; j++) {
+            if (hits[j].indexOf(word) >= 0 || word.indexOf(hits[j]) >= 0) { overlaps = true; break; }
+          }
+          if (!overlaps) hits.push(word);
+        }
+        return hits;
+      }
       function countWeightedHits(text, rule) {
         let score = 0;
         const hits = [];
         const levels = [["strong",10],["medium",5],["weak",1]];
         for (let l = 0; l < levels.length; l++) {
-          const list = rule[levels[l][0]] || [];
+          const list = uniqueSignalHits(text, rule[levels[l][0]] || []);
           const weight = levels[l][1];
           for (let i = 0; i < list.length; i++) {
             const word = list[i];
-            if (text.indexOf(word) >= 0) {
-              const value = weight + Math.min(3, word.length);
-              score += value;
-              hits.push(word);
+            let overlaps = false;
+            for (let j = 0; j < hits.length; j++) {
+              if (hits[j].indexOf(word) >= 0 || word.indexOf(hits[j]) >= 0) { overlaps = true; break; }
             }
+            if (overlaps) continue;
+            score += weight + Math.min(3, word.length);
+            hits.push(word);
           }
         }
         return { score, hits };
@@ -735,11 +785,14 @@
       function matchPhilosopher(userText, camp) {
         const text = String(userText || "").trim().toLowerCase();
         const pool = configs;
-        let best = null;
-        let bestScore = -1;
         const scores = [];
+        let hasSpecificSignal = false;
+        for (let i = 0; i < pool.length; i++) {
+          if (uniqueSignalHits(text, specificSignals[pool[i].id]).length) { hasSpecificSignal = true; break; }
+        }
         Log.group("[matchPhilosopher]");
         Log.log("当前匹配范围: 全部 10 位疗愈师");
+        Log.log("首页来源阵营(仅记录，不参与过滤):", camp || "未指定");
         Log.log("用户输入:", text);
         Log.log("候选哲学家:", pool.map(p => p.name).join(" / "));
         for (let i = 0; i < pool.length; i++) {
@@ -747,15 +800,31 @@
           const ruleScore = countWeightedHits(text, (routeRules[p.camp] && routeRules[p.camp][p.id]) || {});
           const tagScore = countWeightedHits(text, { medium:p.tags || [] });
           const groupScore = countWeightedHits(text, { medium:(keywordGroups[p.camp] && keywordGroups[p.camp][p.id]) || [] });
-          const total = ruleScore.score + Math.floor((tagScore.score + groupScore.score) * .45);
-          scores.push({ camp:p.camp, name:p.name, id:p.id, ruleScore:ruleScore.score, tagScore:tagScore.score, groupScore:groupScore.score, hits:ruleScore.hits.join("、"), total });
-          if (total > bestScore) {
-            best = p;
-            bestScore = total;
-          }
+          const specificHits = uniqueSignalHits(text, specificSignals[p.id]);
+          const genericHits = hasSpecificSignal ? [] : uniqueSignalHits(text, genericOwners[p.id]);
+          const specificScore = specificHits.length ? 24 + specificHits.reduce((sum, word) => sum + Math.min(6, word.length), 0) : 0;
+          const genericScore = genericHits.length ? 14 + genericHits.length * 3 : 0;
+          const groupFallback = ruleScore.score || specificScore || genericScore ? 0 : Math.min(3, groupScore.score);
+          const total = ruleScore.score + Math.floor(tagScore.score * .2) + groupFallback + specificScore + genericScore;
+          scores.push({
+            camp:p.camp, name:p.name, id:p.id,
+            specific:specificHits.join("、"), generic:genericHits.join("、"),
+            ruleScore:ruleScore.score, tagScore:tagScore.score, groupFallback, total
+          });
         }
         Log.table(scores);
-        if (!best || bestScore <= 0) {
+        let best = null;
+        let bestScore = -1;
+        for (let i = 0; i < scores.length; i++) if (scores[i].total > bestScore) bestScore = scores[i].total;
+        if (bestScore > 0) {
+          const tied = scores.filter(item => item.total === bestScore);
+          tied.sort((a,b) => (matchUsage[a.id] || 0) - (matchUsage[b.id] || 0));
+          const leastUsed = matchUsage[tied[0].id] || 0;
+          const finalists = tied.filter(item => (matchUsage[item.id] || 0) === leastUsed);
+          const chosen = finalists[(Math.random() * finalists.length) | 0];
+          best = pool.find(p => p.id === chosen.id);
+          matchUsage[best.id] = (matchUsage[best.id] || 0) + 1;
+        } else {
           const fallbackIndex = fallbackCursor.all++ % pool.length;
           best = pool[fallbackIndex];
           Log.warn("无关键词命中，使用 10 位疗愈师轮转兜底:", best.name, "fallbackIndex:", fallbackIndex);
@@ -783,6 +852,7 @@
         this.dustCtx = this.dustCanvas.getContext("2d", { alpha:true });
         this.dustReady = false;
         this.dustPending = false;
+        this.destroyed = false;
         this.dustW = 0;
         this.dustH = 0;
         this.whitePath = null;
@@ -790,6 +860,17 @@
         this.whiteEyePath = null;
         this.blackEyePath = null;
         this.pathReady = false;
+        // 分桶批绘：alpha 量化 DUST_ALPHA_LEVELS 档 × DUST_COLORS 色 = 固定数量的桶。
+        // 每桶预算好 "rgba(r,g,b,a)" 样式字符串，绘制时每桶只 setFillStyle 一次、globalAlpha 恒为 1。
+        this.dustBuckets = [];
+        this.dustBucketStyle = [];
+        for (let ci = 0; ci < DUST_COLORS.length; ci++) {
+          for (let li = 0; li < DUST_ALPHA_LEVELS; li++) {
+            const a = DUST_ALPHA_MIN + (li + .5) / DUST_ALPHA_LEVELS * (DUST_ALPHA_MAX - DUST_ALPHA_MIN);
+            this.dustBucketStyle.push("rgba(" + DUST_COLORS[ci] + "," + a.toFixed(3) + ")");
+            this.dustBuckets.push([]);
+          }
+        }
         this.buildTaijiPaths();
       }
       buildTaijiPaths() {
@@ -812,6 +893,7 @@
         this.pathReady = true;
       }
       buildNebulaTexture() {
+        if (this.destroyed) return;
         this.dustPending = false;
         const home = this.home;
         const dpr = home.dpr || 1;
@@ -864,9 +946,9 @@
         this.dustReady = true;
       }
       scheduleNebulaTexture() {
-        if (this.dustPending) return;
+        if (this.destroyed || this.dustPending) return;
         this.dustPending = true;
-        const run = () => this.buildNebulaTexture();
+        const run = () => { if (!this.destroyed) this.buildNebulaTexture(); };
         if ("requestIdleCallback" in window) requestIdleCallback(run, { timeout: 600 });
         else setTimeout(run, 16);
       }
@@ -884,12 +966,26 @@
       clearDynamicLayer() {
         this.dynamicCtx.clearRect(0,0,this.home.w,this.home.h);
       }
+      destroy() {
+        this.destroyed = true;
+        this.clearDynamicLayer();
+        if (this.dynamicCanvas.parentNode) this.dynamicCanvas.parentNode.removeChild(this.dynamicCanvas);
+        this.dynamicCanvas.width = 0;
+        this.dynamicCanvas.height = 0;
+        this.dustCanvas.width = 0;
+        this.dustCanvas.height = 0;
+        this.particles.length = 0;
+        this.dustReady = false;
+        this.dustPending = false;
+      }
       init(count) {
         this.particles.length = 0;
         const total = count || 900;
         for (let i = 0; i < total; i++) {
           const t = i / Math.max(1, total - 1);
           const roll = randomLut[lut(i * 41)];
+          const colorIndex = roll < .5 ? 0 : roll < .8 ? 1 : 2;
+          const c = DUST_COLORS[colorIndex];
           const p = {
             x:0, y:0, sx:0, sy:0, ox:0, oy:0, vx:0, vy:0,
             orbitNorm:t,
@@ -901,7 +997,9 @@
             r:(2.6 + randomLut[lut(i * 17)] * 1) * 2,
             phase:randomLut[lut(i * 23)] * TAU,
             active:true,
-            c:roll < .5 ? "135,206,235" : roll < .8 ? "212,175,55" : "255,255,255",
+            c:c,
+            colorIndex:colorIndex,
+            rgbPrefix:"rgba(" + c + ",",
             baseAlpha:roll < .5 ? .7 : roll < .8 ? .62 : .82
           };
           this.particles[i] = p;
@@ -916,10 +1014,10 @@
           if (p.active === false && home.transition) continue;
           p.orbitRadius = 80 + p.orbitNorm * (maxOrbit - 80);
           p.speed = .00035 + (1 - p.orbitNorm) * .0012;
-          p.angle = p.baseAngle + this.dynamicRotation + p.drift + Math.sin(home.frame * p.speed + p.phase) * .035;
-          const spiral = Math.sin(p.angle * 1.9 + p.phase) * (10 + p.orbitNorm * 24);
-          const baseX = cx + Math.cos(p.angle) * (p.orbitRadius + spiral) * .82;
-          const baseY = cy + Math.sin(p.angle) * (p.orbitRadius + spiral) * .78;
+          p.angle = p.baseAngle + this.dynamicRotation + p.drift + fsin(home.frame * p.speed + p.phase) * .035;
+          const spiral = fsin(p.angle * 1.9 + p.phase) * (10 + p.orbitNorm * 24);
+          const baseX = cx + fcos(p.angle) * (p.orbitRadius + spiral) * .82;
+          const baseY = cy + fsin(p.angle) * (p.orbitRadius + spiral) * .78;
           if (pointer.active) {
             const dx = baseX + p.ox - pointer.x, dy = baseY + p.oy - pointer.y, d2 = dx * dx + dy * dy;
             if (d2 > .01 && d2 < 10000) {
@@ -956,18 +1054,33 @@
       drawDynamicLayer(cx, cy) {
         const home = this.home, ctx = this.dynamicCtx;
         ctx.clearRect(0,0,home.w,home.h);
-        // 动态星尘使用 fillRect 微粒，数量可以接近千级，仍比逐个 arc 更轻。
-        for (let i = 0; i < this.particles.length; i++) {
+        // 分桶批绘：把每个粒子按 颜色×量化alpha 归入固定桶，同桶一次 setFillStyle 批量 fillRect。
+        // 状态切换从 ~粒子数 降到 ≤桶数(=DUST_COLORS×DUST_ALPHA_LEVELS)，globalAlpha 恒为 1（alpha 已烘进桶色）。
+        const frame = home.frame, buckets = this.dustBuckets, levels = DUST_ALPHA_LEVELS;
+        const span = DUST_ALPHA_MAX - DUST_ALPHA_MIN;
+        const transition = home.transition;
+        // 按当前性能档缩放实际绘制的星尘数（可升可降），转场时全量以保证坍缩完整。
+        const scale = transition ? 1 : (home.perfScale || 1);
+        const drawCount = (this.particles.length * scale) | 0;
+        for (let b = 0; b < buckets.length; b++) buckets[b].length = 0;
+        for (let i = 0; i < drawCount; i++) {
           const p = this.particles[i];
-          if (p.active === false && home.transition) continue;
-          const alpha = clamp(p.baseAlpha + Math.sin(home.frame * .035 + p.phase) * .16, .16, .86);
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle = "rgba(" + p.c + "," + alpha + ")";
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.r * .5, 0, TAU);
-          ctx.fill();
+          if (p.active === false && transition) continue;
+          const alpha = clamp(p.baseAlpha + fsin(frame * .035 + p.phase) * .16, DUST_ALPHA_MIN, DUST_ALPHA_MAX);
+          let li = (((alpha - DUST_ALPHA_MIN) / span) * levels) | 0;
+          if (li >= levels) li = levels - 1; else if (li < 0) li = 0;
+          buckets[p.colorIndex * levels + li].push(p);
         }
         ctx.globalAlpha = 1;
+        for (let b = 0; b < buckets.length; b++) {
+          const list = buckets[b];
+          if (list.length === 0) continue;
+          ctx.fillStyle = this.dustBucketStyle[b];
+          for (let k = 0; k < list.length; k++) {
+            const p = list[k], s = p.r, h = s * .5;
+            ctx.fillRect(p.x - h, p.y - h, s, s);
+          }
+        }
         this.drawTaiji(ctx, cx, cy);
         ctx.globalAlpha = 1;
       }
@@ -1004,16 +1117,23 @@
         this.dpr = 1; this.w = 1; this.h = 1; this.frame = 0; this.running = false; this.raf = 0;
         const rm = PerfConfig.reducedMotion;
         this.count = PerfConfig.isMobile ? PerfConfig.mobileParticles : PerfConfig.homeParticlesDesktop;
-        this.eastCount = rm ? 600 : (PerfConfig.isMobile ? 1200 : 2600);
+        this.eastCount = rm ? 600 : (PerfConfig.isMobile ? 1100 : 1800);
         this.westCount = rm ? 40 : (PerfConfig.isMobile ? 70 : 100);
         this.east = []; this.west = []; this.sparks = []; this.sparkCursor = 0;
         this.dataPulses = []; this.dataPulseCursor = 0;
         this.taiji = new TaijiSystem(this);
         this.transition = false; this.clickX = 0; this.clickY = 0; this.start = 0; this.completed = false; this.transitionElapsed = 0; this.transitionLast = 0; this.transitionCount = 0; this.transitionItems = new Array(100);
         this.startedAt = performance.now();
+        this.perfScale = 1;             // 分层自适应档位：0.4~1，绘制动态星尘时按此缩放数量
         this.pointer = { x:-9999, y:-9999, active:0 };
+        // 开场脚本引导碰撞：1.2s 起东西两束彗星朝中央汇聚，2.2s 必然迸发火花+光晕，3s 后恢复自由碰撞。
+        this.introDone = rm;            // reducedMotion 直接跳过引导，保持静态
+        this.introBurst = rm;
+        this.introGlow = 0;
+        this.introComets = [];
         this.resize();
         this.initParticles();
+        this.initIntroComets(rm ? 0 : (PerfConfig.isMobile ? 10 : 16));
         this.clickHandler = e => this.handlePointer(e);
         EventHub.on(canvas, "pointerdown", this.clickHandler, { passive: true });
         EventHub.on(canvas, "pointermove", e => { this.pointer.x = e.clientX; this.pointer.y = e.clientY; this.pointer.active = 1; }, { passive: true });
@@ -1025,6 +1145,28 @@
         for (let i = 0; i < this.westCount; i++) this.west[i] = this.makeParticle(i, false);
         for (let i = 0; i < 30; i++) this.sparks[i] = { x:0, y:0, vx:0, vy:0, r:1, life:0, active:false, phase:(randomLut[lut(i*67)]*LUT_SIZE)|0, c:"#ffffff" };
         for (let i = 0; i < 10; i++) this.dataPulses[i] = { active:false, ax:0, ay:0, bx:0, by:0, t:0, speed:.05, life:0 };
+      }
+      // 开场彗星：东侧偏青金、西侧偏蓝紫，从各自半屏边缘朝中央目标点汇聚。纯对象池，无 DOM。
+      initIntroComets(count) {
+        this.introComets.length = 0;
+        for (let i = 0; i < count; i++) {
+          const east = i % 2 === 0;
+          const spread = (randomLut[lut(i * 71 + 5)] - .5) * this.h * .5;
+          this.introComets[i] = {
+            east,
+            sx: east ? -this.w * .04 : this.w * 1.04,
+            sy: this.h * .5 + spread,
+            x: east ? -this.w * .04 : this.w * 1.04, y: this.h * .5 + spread,
+            px: east ? -this.w * .04 : this.w * 1.04, py: this.h * .5 + spread,
+            tx: this.w * .5 + (randomLut[lut(i * 53 + 9)] - .5) * 70,
+            ty: this.h * .5 + (randomLut[lut(i * 37 + 3)] - .5) * 70,
+            delay: randomLut[lut(i * 29 + 7)] * .28,
+            r: 1.6 + randomLut[lut(i * 13)] * 1.8,
+            c: east
+              ? (randomLut[lut(i * 17)] > .5 ? "212,175,55" : "135,206,235")
+              : (randomLut[lut(i * 19)] > .5 ? "0,191,255" : "150,120,230")
+          };
+        }
       }
       makeParticle(i, east) {
         const speed = east ? .2 + randomLut[lut(i*41)] * .3 : .3 + randomLut[lut(i*43)] * .3;
@@ -1078,8 +1220,7 @@
       }
       startLoop() { if (!this.running) { this.running = true; this.loop = this.loop || this.tick.bind(this); this.raf = requestAnimationFrame(this.loop); } }
       stop() { this.running = false; cancelAnimationFrame(this.raf); }
-      destroy() { this.stop(); EventHub.offAll(this.canvas); if (this.taiji) this.taiji.clearDynamicLayer(); this.east = null; this.west = null; this.sparks = null; this.dataPulses = null; }
-      reduceParticles(ratio) { this.east.length = Math.max(20, (this.east.length * ratio) | 0); this.west.length = Math.max(20, (this.west.length * ratio) | 0); }
+      destroy() { this.stop(); EventHub.offAll(this.canvas); if (this.taiji) { this.taiji.destroy(); this.taiji = null; } this.east = null; this.west = null; this.sparks = null; this.dataPulses = null; }
       tick(now) {
         if (!this.running) return;
         this.frame++;
@@ -1107,7 +1248,72 @@
           return;
         }
         this.drawAmbientTexture(ctx);
-        this.drawEast(ctx); this.drawWest(ctx); this.updateCollisions(); this.drawSparks(ctx);
+        this.drawEast(ctx); this.drawWest(ctx);
+        if (!this.introDone) this.updateIntro(ctx, now);
+        this.updateCollisions(); this.drawSparks(ctx);
+        if (this.introGlow > 0) this.drawIntroGlow(ctx);
+      }
+      updateIntro(ctx, now) {
+        // 脚本引导：以 startedAt 为基准计时。1.2s 前静默，1.2-2.2s 彗星从两侧向中央汇聚，2.2s 迸发火花+光晕。
+        const t = (now - this.startedAt) / 1000;
+        if (t < 1.2) return;
+        const travel = clamp((t - 1.2) / 1.0, 0, 1);
+        ctx.save();
+        for (let i = 0; i < this.introComets.length; i++) {
+          const c = this.introComets[i];
+          const local = clamp((travel - c.delay) / (1 - c.delay), 0, 1);
+          const k = easeOutCubic(local);
+          c.px = c.x; c.py = c.y;
+          c.x = lerp(c.sx, c.tx, k);
+          c.y = lerp(c.sy, c.ty, k);
+          const alpha = local <= 0 ? 0 : (.35 + local * .55);
+          ctx.globalAlpha = alpha * .3;
+          ctx.strokeStyle = "rgba(" + c.c + ",1)";
+          ctx.lineWidth = c.r;
+          ctx.beginPath(); ctx.moveTo(c.px, c.py); ctx.lineTo(c.x, c.y); ctx.stroke();
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = "rgba(" + c.c + ",1)";
+          ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, TAU); ctx.fill();
+        }
+        ctx.restore();
+        ctx.globalAlpha = 1;
+        if (!this.introBurst && travel >= 1) {
+          this.introBurst = true;
+          this.introGlow = 1;
+          this.spawnIntroBurst();
+        }
+        if (this.introBurst && this.introGlow <= 0) this.introDone = true;
+      }
+      spawnIntroBurst() {
+        // 中央必然迸发：填满火花对象池，从中心呈放射状飞散。
+        const cx = this.w * .5, cy = this.h * .5;
+        for (let i = 0; i < this.sparks.length; i++) {
+          const s = this.sparks[i];
+          const a = randomLut[lut(i * 97 + 3)] * TAU;
+          const sp = .6 + randomLut[lut(i * 41 + 7)] * 1.6;
+          s.x = cx + (randomLut[lut(i * 13)] - .5) * 40;
+          s.y = cy + (randomLut[lut(i * 29)] - .5) * 40;
+          s.vx = Math.cos(a) * sp; s.vy = Math.sin(a) * sp;
+          s.r = 1 + randomLut[lut(i * 53)] * 1.4;
+          s.life = 15 + (randomLut[lut(i * 67)] * 12 | 0);
+          s.active = true;
+          s.c = randomLut[lut(i * 19)] > .6 ? "#d4af37" : "#ffffff";
+        }
+      }
+      drawIntroGlow(ctx) {
+        const cx = this.w * .5, cy = this.h * .5, k = this.introGlow;
+        const r = lerp(30, 260, 1 - k);
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        g.addColorStop(0, "rgba(255,255,255," + (k * .5) + ")");
+        g.addColorStop(.4, "rgba(212,175,55," + (k * .22) + ")");
+        g.addColorStop(1, "rgba(10,14,26,0)");
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill();
+        ctx.restore();
+        this.introGlow -= .04;
+        if (this.introGlow < 0) this.introGlow = 0;
       }
       drawAmbientTexture(ctx) {
         // 右侧西方粒子逻辑（未修改）：保留原有极淡星轨背景，不触碰几何连线与粒子绘制。
@@ -1187,24 +1393,7 @@
         this.taiji.draw(ctx);
       }
       drawWest(ctx) {
-        ctx.save(); ctx.strokeStyle = "rgba(0,191,255,.15)";
-        ctx.lineWidth = .5;
-        ctx.beginPath();
-        let activePulses = 0;
-        for (let i = 0; i < this.dataPulses.length; i++) if (this.dataPulses[i].active) activePulses++;
-        let pulseBudget = Math.min(10 - activePulses, 1 + (randomLut[lut(this.frame * 17)] * 3 | 0));
-        for (let i = 0; i < this.west.length; i++) for (let j = i+1; j < this.west.length; j++) {
-          const a = this.west[i], b = this.west[j], dx = a.x-b.x, dy = a.y-b.y;
-          if (dx*dx+dy*dy < 9025) {
-            ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
-            // 新增：星轨脉冲/数据流。只在已有连线上挂载视觉光点，不改变连线和粒子物理。
-            if (pulseBudget > 0 && ((this.frame + i * 7 + j * 11) % 47 === 0)) {
-              this.spawnDataPulse(a.x, a.y, b.x, b.y);
-              pulseBudget--;
-            }
-          }
-        }
-        ctx.stroke();
+        // 先更新所有西方粒子物理位置，再基于新位置做连线，保证分桶与绘制一致。
         for (let i = 0; i < this.west.length; i++) {
           const p = this.west[i];
           let vx = p.vx, vy = p.vy;
@@ -1218,6 +1407,44 @@
           p.x += vx; p.y += vy;
           if (p.x < this.w*.5-20) p.x = this.w+20; if (p.x > this.w+20) p.x = this.w*.5;
           if (p.y < -20) p.y = this.h; if (p.y > this.h+20) p.y = 0;
+        }
+        // 空间网格分桶：连线距离 95px，格边取 95，每粒子只查自身+相邻格，把 O(n²) 降到近 O(n)。
+        this.buildWestGrid();
+        ctx.save(); ctx.strokeStyle = "rgba(0,191,255,.15)";
+        ctx.lineWidth = .5;
+        ctx.beginPath();
+        let activePulses = 0;
+        for (let i = 0; i < this.dataPulses.length; i++) if (this.dataPulses[i].active) activePulses++;
+        let pulseBudget = Math.min(10 - activePulses, 1 + (randomLut[lut(this.frame * 17)] * 3 | 0));
+        const grid = this.westGrid, cols = this.westCols, rows = this.westRows, cell = 95, ox = this.w * .5 - 20;
+        for (let i = 0; i < this.west.length; i++) {
+          const a = this.west[i];
+          const gx = clamp(((a.x - ox) / cell) | 0, 0, cols - 1), gy = clamp((a.y / cell) | 0, 0, rows - 1);
+          // 只向右/下相邻格查找。同格用 k>i 去重；邻格反向永不遍历，故无需 k>i（否则会漏掉一半连线）。
+          for (let ddy = 0; ddy <= 1; ddy++) for (let ddx = -1; ddx <= 1; ddx++) {
+            if (ddy === 0 && ddx < 0) continue;
+            const nx = gx + ddx, ny = gy + ddy;
+            if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+            const sameCell = (ddx === 0 && ddy === 0);
+            let k = grid[ny * cols + nx];
+            while (k !== -1) {
+              if (sameCell ? k > i : k !== i) {
+                const b = this.west[k], dx = a.x-b.x, dy = a.y-b.y;
+                if (dx*dx+dy*dy < 9025) {
+                  ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+                  if (pulseBudget > 0 && ((this.frame + i * 7 + k * 11) % 47 === 0)) {
+                    this.spawnDataPulse(a.x, a.y, b.x, b.y);
+                    pulseBudget--;
+                  }
+                }
+              }
+              k = this.westNext[k];
+            }
+          }
+        }
+        ctx.stroke();
+        for (let i = 0; i < this.west.length; i++) {
+          const p = this.west[i];
           ctx.globalAlpha = randomLut[lut((this.frame>>2)+p.phase)] > .96 ? 1 : .65;
           ctx.fillStyle = p.c;
           if (p.shape) ctx.fillRect(p.x-p.r,p.y-p.r,p.r*2,p.r*2);
@@ -1225,6 +1452,23 @@
         }
         this.drawDataPulses(ctx);
         ctx.restore(); ctx.globalAlpha = 1;
+      }
+      buildWestGrid() {
+        const cell = 95, ox = this.w * .5 - 20;
+        const cols = Math.max(1, Math.ceil((this.w + 40 - ox) / cell)), rows = Math.max(1, Math.ceil((this.h + 40) / cell));
+        if (!this.westGrid || this.westCols !== cols || this.westRows !== rows) {
+          this.westGrid = new Int32Array(cols * rows);
+          this.westCols = cols; this.westRows = rows;
+        }
+        if (!this.westNext || this.westNext.length < this.west.length) this.westNext = new Int32Array(this.west.length);
+        this.westGrid.fill(-1);
+        for (let i = 0; i < this.west.length; i++) {
+          const p = this.west[i];
+          const gx = clamp(((p.x - ox) / cell) | 0, 0, cols - 1), gy = clamp((p.y / cell) | 0, 0, rows - 1);
+          const cellIdx = gy * cols + gx;
+          this.westNext[i] = this.westGrid[cellIdx];
+          this.westGrid[cellIdx] = i;
+        }
       }
       spawnDataPulse(ax, ay, bx, by) {
         const p = this.dataPulses[this.dataPulseCursor];
@@ -1319,7 +1563,8 @@
         for (let i = 0; i < this.stars.length; i++) this.stars[i] = { x:0, y:0, r:.5, a:.3, c:"#fff" };
         this.bgCanvas = document.createElement("canvas"); this.bgCtx = this.bgCanvas.getContext("2d", { alpha:false });
         this.shapePaths = this.buildShapePaths();
-        this.config = Philosophy.configs[0]; this.progress = 0; this.target = 0; this.frame = 0; this.running = false; this.raf = 0; this.motion = 1; this.crystal = false; this.crystalStart = 0; this.initialized = false;
+        this.config = Philosophy.configs[0]; this.progress = 0; this.target = 0; this.frame = 0; this.running = false; this.raf = 0; this.motion = 1; this.crystal = false; this.crystalStart = 0; this.initialized = false; this.perfScale = 1;
+        this.particleStyles = { primaryInner:"", primaryGlow:"", secondaryInner:"", secondaryGlow:"" };
         this.resize();
         EventHub.on(this.canvas, "click", e => this.handlePointer(e, 2), { passive:true });
         EventHub.on(this.canvas, "mousemove", e => this.handlePointer(e, 1), { passive:true });
@@ -1332,7 +1577,7 @@
         this.mouseStrength = mode === 2 ? 1 : .35;
       }
       /** 初始化指定哲学家的树。@param {object} config */
-      init(config) { this.config = config || Philosophy.configs[0]; this.progress = 0; this.target = 0; this.crystal = false; this.motion = 1; this.initialized = true; this.assignParticleShapes(); this.resize(); for(let i=0;i<this.pool.length;i++){this.pool[i].active=false;this.pool[i].birthTime=0;} Log.info("[TreeEngine] 只初始化一次", this.config.name || this.config.id); }
+      init(config) { this.config = config || Philosophy.configs[0]; this.progress = 0; this.target = 0; this.crystal = false; this.motion = 1; this.initialized = true; this.particleStyles.primaryInner=hexToRgba(this.config.color,.92); this.particleStyles.primaryGlow=hexToRgba(this.config.color,.45); this.particleStyles.secondaryInner=hexToRgba(this.config.secondary,.92); this.particleStyles.secondaryGlow=hexToRgba(this.config.secondary,.45); this.assignParticleShapes(); this.resize(); for(let i=0;i<this.pool.length;i++){this.pool[i].active=false;this.pool[i].birthTime=0;} Log.info("[TreeEngine] 只初始化一次", this.config.name || this.config.id); }
       // 形状绘制函数准备：初始化时为粒子分配专属形状编号，渲染循环只做一次 drawParticle，避免旧圆圈与新形状叠加。
       assignParticleShapes() {
         const id = this.config && this.config.id;
@@ -1412,7 +1657,6 @@
       start() { if (!this.running) { this.running = true; this.loop = this.loop || this.tick.bind(this); this.raf = requestAnimationFrame(this.loop); } }
       stop() { this.running = false; cancelAnimationFrame(this.raf); }
       destroy() { this.stop(); EventHub.offAll(this.canvas); this.pool = null; this.stars = null; this.bgCanvas.width = 0; this.bgCanvas.height = 0; }
-      reduceParticles(ratio) { this.renderLimit = Math.max(50, Math.min(150, (this.renderLimit * ratio) | 0)); }
       /** 设置生长进度。@param {number} value 0-100 */
       setProgress(value) { const next = clamp(Number(value) || 0, 0, 100); if ((Number(value) || 0) !== next) Log.warn("[TreeEngine] progress 越界，已截断", value, "=>", next); this.target = next; AppState.growthProgress = next; }
       /** 触发结晶动画。 */
@@ -1527,7 +1771,9 @@
         const grow = progress < 25 ? sprout*.08 : progress < 55 ? trunk*.69 : .69 + leaf*.31;
         const globalBreath = .5 + Math.sin(time * (progress >= 85 ? Math.PI : 1.5)) * .5;
         const skeletonCount = progress >= 25 ? this.generateBranches(progress, this.config.trajectory) : 0;
-        const activeCount = progress >= 25 ? Math.min(this.activeCountForProgress(progress), Math.max(1, skeletonCount), this.pool.length) : this.activeCountForProgress(progress);
+        let activeCount = progress >= 25 ? Math.min(this.activeCountForProgress(progress), Math.max(1, skeletonCount), this.pool.length) : this.activeCountForProgress(progress);
+        // 分层自适应：按 perfScale 缩放活跃粒子数，保留至少 40% 以免树秃；可升可降。
+        if (this.perfScale < 1 && activeCount > 0) activeCount = Math.max((activeCount * 0.4) | 0, (activeCount * this.perfScale) | 0);
         this.renderLimit = activeCount;
         if (progress <= 5) { this.drawSeedAwakening(ctx, progress, time); return; }
         if ((this.frame % 10) === 0) this.refreshBrownianNoise();
@@ -1674,17 +1920,17 @@
         ctx.stroke(); ctx.restore();
       }
       drawParticles(leaf,bloom) {
-        const ctx=this.ctx; ctx.save(); ctx.shadowBlur=0;
+        const ctx=this.ctx,styles=this.particleStyles,allowGlow=this.perfScale>.55; ctx.save(); ctx.shadowBlur=0;
         for(let i=0;i<this.pool.length;i++){
           const p=this.pool[i]; if(!p.active)continue;
-          const color=p.leaf || p.a>.66?this.config.secondary:this.config.color;
-          const glow = p.leaf || bloom > .35;
+          const secondary=p.leaf || p.a>.66;
+          const glow = allowGlow && (p.leaf || bloom > .35);
           if (glow) {
             ctx.globalAlpha = p.opacity * (.16 + bloom * .18);
-            ctx.fillStyle = hexToRgba(color,.45);
+            ctx.fillStyle = secondary ? styles.secondaryGlow : styles.primaryGlow;
             this.drawParticle(ctx,p,this.config.id,p.r * 3.2);
           }
-          ctx.globalAlpha=p.opacity; ctx.fillStyle=hexToRgba(color,.92);
+          ctx.globalAlpha=p.opacity; ctx.fillStyle=secondary ? styles.secondaryInner : styles.primaryInner;
           this.drawParticle(ctx,p,this.config.id);
         }
         ctx.restore(); ctx.globalAlpha=1;
@@ -1794,9 +2040,9 @@
       wrap(ctx,text,x,y,max,lineH){let line="",yy=y;for(let i=0;i<text.length;i++){const t=line+text[i];if(ctx.measureText(t).width>max&&line){ctx.fillText(line,x,yy);line=text[i];yy+=lineH;}else line=t;}if(line)ctx.fillText(line,x,yy);}
     }
     class CardPreviewModal {
-      constructor(){ this.dataUrl=""; this.scale=1; this.startDist=0; this.baseScale=1; EventHub.on(Dom.cardModal,"click",e=>{ if(e.target===Dom.cardModal)this.close(); }); EventHub.on(Dom.continueBtn,"click",()=>this.close()); EventHub.on(Dom.cardModal,"touchstart",e=>this.touchStart(e),{passive:true}); EventHub.on(Dom.cardModal,"touchmove",e=>this.touchMove(e),{passive:false}); }
-      show(data){ this.dataUrl=data; this.scale=1; Dom.cardPreview.style.transform="scale(1)"; Dom.cardPreview.src=data; Dom.cardModal.classList.add("show"); Dom.cardModal.setAttribute("aria-hidden","false"); }
-      close(){ Dom.cardModal.classList.remove("show"); Dom.cardModal.setAttribute("aria-hidden","true"); }
+      constructor(){ this.dataUrl=""; this.scale=1; this.startDist=0; this.baseScale=1; this.resumeTree=false; EventHub.on(Dom.cardModal,"click",e=>{ if(e.target===Dom.cardModal)this.close(); }); EventHub.on(Dom.continueBtn,"click",()=>this.close()); EventHub.on(Dom.cardModal,"touchstart",e=>this.touchStart(e),{passive:true}); EventHub.on(Dom.cardModal,"touchmove",e=>this.touchMove(e),{passive:false}); }
+      show(data){ this.dataUrl=data; this.scale=1; this.resumeTree=!!(App.tree&&App.tree.running); if(this.resumeTree)App.tree.stop(); Dom.cardPreview.style.transform="scale(1)"; Dom.cardPreview.src=data; Dom.cardModal.classList.add("show"); Dom.cardModal.setAttribute("aria-hidden","false"); }
+      close(){ Dom.cardModal.classList.remove("show"); Dom.cardModal.setAttribute("aria-hidden","true"); if(this.resumeTree&&App.tree&&AppState.currentPage==="chat"&&document.visibilityState!=="hidden")App.tree.start(); this.resumeTree=false; }
       touchStart(e){ if(e.touches.length===2){ const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; this.startDist=Math.hypot(dx,dy); this.baseScale=this.scale; } }
       touchMove(e){ if(e.touches.length===2){ e.preventDefault(); const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; this.scale=clamp(this.baseScale*Math.hypot(dx,dy)/this.startDist,1,2.6); Dom.cardPreview.style.transform="scale("+this.scale+")"; } }
     }
@@ -1808,28 +2054,46 @@
     const AIReplyService = {
       config: null,
       loaded: false,
+      loading: null,
+      usableConfig(config) {
+        return !!(config && config.enabled && config.apiKey && config.apiKey !== "PASTE_YOUR_API_KEY_HERE");
+      },
       async load() {
         if (this.loaded) return this.config;
-        this.loaded = true;
-        if (window.API_CONFIG && window.API_CONFIG.apiKey) {
-          this.config = window.API_CONFIG;
-          Log.info("[AIReplyService] 已读取 api-config.js 配置");
+        if (this.loading) return this.loading;
+        this.loading = (async () => {
+          const scriptConfig = window.API_CONFIG || null;
+          if (this.usableConfig(scriptConfig)) {
+            this.config = scriptConfig;
+            Log.info("[AIReplyService] 已读取启用的 api-config.js 配置");
+          } else {
+            const localHost = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])$/i.test(location.hostname);
+            if (!localHost) {
+              this.config = scriptConfig || { enabled:false };
+              Log.info("[AIReplyService] 公开部署不读取本地 API 配置，使用本地模拟回复");
+            } else {
+              try {
+                const res = await fetch("api-config.json", { cache:"no-store" });
+                if (!res.ok) throw new Error("api-config.json not found");
+                const jsonConfig = await res.json();
+                this.config = this.usableConfig(jsonConfig) ? jsonConfig : (scriptConfig || jsonConfig);
+                Log.info(this.usableConfig(jsonConfig)
+                  ? "[AIReplyService] 已读取本地 api-config.json"
+                  : "[AIReplyService] 配置未启用或缺少有效 Key，使用本地模拟回复");
+              } catch (err) {
+                this.config = scriptConfig || { enabled:false };
+                Log.info("[AIReplyService] 未读取到可用的本地 API 配置，使用本地模拟回复");
+              }
+            }
+          }
+          this.loaded = true;
+          this.loading = null;
           return this.config;
-        }
-        try {
-          const res = await fetch("api-config.json", { cache:"no-store" });
-          if (!res.ok) throw new Error("api-config.json not found");
-          this.config = await res.json();
-          Log.info("[AIReplyService] 已读取 api-config.json 配置");
-        } catch (err) {
-          this.config = { enabled:false };
-          Log.info("[AIReplyService] 未读取到 api-config.js/json，使用本地模拟回复");
-        }
-        return this.config;
+        })();
+        return this.loading;
       },
       available() {
-        const c = this.config;
-        return !!(c && c.enabled && c.apiKey && c.apiKey !== "PASTE_YOUR_API_KEY_HERE");
+        return this.usableConfig(this.config);
       },
       buildPrompt(p, userText) {
         return [
@@ -1866,7 +2130,7 @@
         const isMimo = /xiaomimimo/i.test(url) || /mimo|xiaomi/i.test(String(c.provider || ""));
         const headers = isMimo ? { "Content-Type":"application/json", "api-key":c.apiKey } : { "Content-Type":"application/json", "Authorization":"Bearer "+c.apiKey };
         const body = { model:c.model || (isMimo ? "mimo-v2.5-pro" : "gpt-4o-mini"), messages:[{ role:"system", content:"你是短句情感疗愈导师，严格遵守用户要求。" },{ role:"user", content:prompt }], temperature:c.temperature ?? .7 };
-        if (isMimo) { body.max_completion_tokens = Math.max(c.maxOutputTokens || 80, 256); body.top_p = c.topP ?? .95; body.stream = false; body.stop = null; body.frequency_penalty = 0; body.presence_penalty = 0; }
+        if (isMimo) { body.max_completion_tokens = Math.max(c.maxOutputTokens || 80, 2048); body.top_p = c.topP ?? .95; body.stream = false; body.stop = null; body.frequency_penalty = 0; body.presence_penalty = 0; }
         else body.max_tokens = c.maxOutputTokens || 80;
         const res = await fetch(url, { method:"POST", headers, body:JSON.stringify(body) });
         if (!res.ok) throw new Error("OpenAI API failed: "+res.status);
@@ -1877,7 +2141,7 @@
 
     /* ═══════ 模块④：对话页面 ═══════ */
     class ChatPage {
-      constructor() { this.turns = 0; this.typing = false; this.targetProgress = 0; }
+      constructor() { this.turns = 0; this.typing = false; this.targetProgress = 0; this.progressAnimationId = 0; this.progressToken = 0; }
       init() {
         this.renderLoading();
         EventHub.on(Dom.sendBtn,"click",()=>this.send());
@@ -1885,7 +2149,7 @@
         EventHub.on(Dom.userInput,"focus",()=>Dom.inputWrap.classList.add("focused"));
         EventHub.on(Dom.userInput,"blur",()=>Dom.inputWrap.classList.remove("focused"));
       }
-      reset() { this.turns=0; this.typing=false; this.targetProgress=0; Dom.messages.innerHTML=""; this.renderLoading(); }
+      reset() { this.cancelProgressAnimation(); this.turns=0; this.typing=false; this.targetProgress=0; Dom.messages.innerHTML=""; this.renderLoading(); }
       renderLoading(){ Dom.mentorBar.innerHTML='<div class="mentorName">正在为您匹配跨时空导师...<span class="dots"><i></i><i></i><i></i></span></div>'; }
       renderMatching(){ Dom.mentorBar.innerHTML='<div class="mentorName">正在匹配...<span class="dots"><i></i><i></i><i></i></span></div>'; }
       renderMentor(p){ document.documentElement.style.setProperty("--mentor-color",p.color); document.documentElement.style.setProperty("--mentor-glow",hexToRgba(p.color,.38)); Dom.mentorBar.classList.add("fade"); setTimeout(()=>{Dom.mentorBar.innerHTML='<div class="avatar" style="background:'+p.color+'">'+p.initial+'</div><div><div class="mentorName">'+p.name+'</div><div class="mentorSlogan">'+p.slogan+'</div></div>';Dom.mentorBar.classList.remove("fade");},150); }
@@ -1903,33 +2167,51 @@
         } else this.reply();
       }
       nextProgress(){ if(this.turns>=4)return 100; if(this.turns>=3)return 85; if(this.turns>=2)return 55; if(this.turns>=1)return 25; return AppState.growthProgress; }
-      animateProgress(to,duration){ const from=clamp(AppState.growthProgress,0,100), target=clamp(to,0,100), start=performance.now(); const step=()=>{const k=clamp((performance.now()-start)/duration,0,1); AppState.growthProgress=clamp(from+(target-from)*k,0,100); App.tree.setProgress(AppState.growthProgress); if(k<1)requestAnimationFrame(step);}; requestAnimationFrame(step); }
-      async reply(){ const p=AppState.currentPhilosopher, bubble=this.addMessage("ai",""); this.typing=true; Dom.sendBtn.disabled=true; let text=""; try{text=await AIReplyService.reply(p,this.latestUserText());}catch(err){Log.warn("[AIReplyService] API 回复失败，回退本地模拟",err);} if(!text)text=this.smartReply(p); this.typing=false; Dom.sendBtn.disabled=false; const next=this.nextProgress(); if(next>AppState.growthProgress)this.animateProgress(next,Math.max(1200,text.length*40)); this.type(bubble,text,()=>{ if(this.turns>=4&&AppState.growthProgress>=99)App.tree.crystallize(); }); }
+      cancelProgressAnimation(){ this.progressToken++; if(this.progressAnimationId)cancelAnimationFrame(this.progressAnimationId); this.progressAnimationId=0; }
+      animateProgress(to,duration){ this.cancelProgressAnimation(); const token=this.progressToken,from=clamp(AppState.growthProgress,0,100),target=clamp(to,0,100),start=performance.now(); const step=()=>{if(token!==this.progressToken)return;const k=clamp((performance.now()-start)/duration,0,1);App.tree.setProgress(from+(target-from)*k);if(k<1)this.progressAnimationId=requestAnimationFrame(step);else this.progressAnimationId=0;}; this.progressAnimationId=requestAnimationFrame(step); }
+      async reply(){ const p=AppState.currentPhilosopher, bubble=this.addMessage("ai",""); this.typing=true; Dom.sendBtn.disabled=true; let text=""; try{text=await AIReplyService.reply(p,this.latestUserText());}catch(err){Log.warn("[AIReplyService] API 回复失败，回退本地模拟",err);} if(!text)text=this.localReply(p); this.typing=false; Dom.sendBtn.disabled=false; const next=this.nextProgress(); if(next>AppState.growthProgress)this.animateProgress(next,Math.max(1200,text.length*40)); this.type(bubble,text,()=>{ if(this.turns>=4){this.cancelProgressAnimation();App.tree.setProgress(100);App.tree.crystallize();} }); }
       latestUserText(){ for(let i=AppState.conversationHistory.length-1;i>=0;i--) if(AppState.conversationHistory[i].role==="user") return AppState.conversationHistory[i].text; return ""; }
       extractKeyword(text){
         const keys=["焦虑","迷茫","压力","讨好","工作","内耗","拖延","失恋","愤怒","无意义","重复","虚无","嫉妒","社恐","不敢拒绝","控制","比较","低谷"];
         for(let i=0;i<keys.length;i++) if(text.indexOf(keys[i])>=0) return keys[i];
         return "这件事";
       }
+      // 本地回复调度：奇数轮用关键词组合(贴合当下输入)，偶数轮抽策划整句，两套交替，回复更有人味、更少重复。
+      localReply(p){
+        return (this.turns % 2 === 1) ? this.smartReply(p) : this.curatedReply(p);
+      }
+      // 第二回复源：从 Philosophy.replies 的整句里按顺序轮转取一条，尽量不重复。
+      curatedReply(p){
+        const pool = (Philosophy.replies && Philosophy.replies[p.id]) || Philosophy.replies.wangYangming;
+        if (!this.replyCursor) this.replyCursor = {};
+        const cur = this.replyCursor[p.id] || (this.replyCursor[p.id] = { n:0 });
+        const idx = cur.n % pool.length; cur.n++;
+        return pool[idx];
+      }
       smartReply(p){
         const keyword=this.extractKeyword(this.latestUserText());
         const bank={
-          wangYangming:[["我知道{kw}让你很乱","你不是做不到","先别责备自己"],["只做眼前一小步","把念头落到行动里","先完成最小的一件事"],["知行合一","事上磨心","此心光明"]],
-          zhuangzi:[["你被{kw}缠住了","这把尺子量疼了你","心被外物牵走了"],["先松开一点","让风穿过心口","别替万物排队"],["相忘于江湖","天地与我并生","逍遥在松手处"]],
-          sushi:[["这份{kw}真难熬","我懂你此刻的苦味","风雨打在身上会疼"],["先照顾今日烟火","吃点热的再看路","把日子过热一点"],["一蓑烟雨任平生","此心安处是吾乡","人间有味是清欢"]],
-          laozi:[["{kw}把你推急了","你抓得太紧了","心被未来拉扯了"],["先慢一息","顺势而行","少用力，多留白"],["上善若水","知止不殆","夫唯不争"]],
-          kongmeng:[["这份{kw}确实压心","你的委屈我看见了","此事需要分寸"],["守住本心","先辨义，再行动","仁厚也要有边界"],["君子和而不同","义之所在，心自定","君子坦荡荡"]],
-          aurelius:[["我看见{kw}在扰动你","这阵焦灼很真实","外界正拉扯你的心"],["先分清可控之事","把判断权收回来","只管此刻能做的"],["宁静来自判断","你拥有支配心灵的力量","只关注你能控制之事"]],
-          nietzsche:[["别向{kw}低头","这痛正在试炼你","深渊靠近了"],["把它锻成力量","站直，重估它","别把软弱当命运"],["成为你自己","杀不死你的使你更强","重估一切价值"]],
-          camus:[["这种{kw}很冷","荒诞感会让人麻木","世界沉默时很难受"],["看清它，然后继续","给今天放下一枚意义","清醒本身就是反抗"],["反抗，故我们存在","必须想象西西弗斯幸福","隆冬里仍有夏天"]],
-          schopenhauer:[["你正被{kw}牵引","这份痛并不轻","欲望让心疲惫"],["少要一点，少受一点苦","先看破这层幻象","把比较放远一些"],["欲望是痛苦的根","减少欲望便减少枷锁","人生在痛苦与无聊间摇摆"]],
-          adler:[["{kw}让你背了太多别人","你不必替所有人舒服","害怕评价会很累"],["先分清谁的课题","把评价还给别人","允许自己不被所有人喜欢"],["课题分离","自由就是被讨厌的勇气","你的人生由你选择"]]
+          wangYangming:[["我知道{kw}把你压得有点喘不过气，那种被念头缠住、迈不开步的滋味，我懂。","你不是无能，只是心里的杂念太多，连你自己都被它们吓住了。","先别急着责备自己，你肯说出口，其实已经是在直面它了。"],["别想着一口气解决全部，挑眼前最小的一件事，把它做完就好。","把飘在脑子里的念头，落到手上的一个动作里，心自然会稳下来。","今天只求进一寸，哪怕只是起身、写下一行字，都算数。"],["知是行之始，行是知之成——你动起来的那一刻，路就开始显形了。","人须在事上磨，方立得住；心，是在做事里一点点亮起来的。","此心光明，亦复何言，你本就有把日子过明白的力气。"]],
+          zhuangzi:[["你被{kw}这把尺子量疼了，可那尺子，本来就不是为你而造的。","这世界太吵，你却把满耳的喧闹都搬进了心里，难怪会累。","求而不得的时候最煎熬，我懂你此刻攥得有多紧。"],["先松开手看看，手空了，风才进得来，天地才容得下你。","别替万物排队，也别跟谁抢那根枝头，你自有你的江湖。","让那些声音从耳边流过去吧，不必每一句都接住。"],["天地与我并生，万物与我为一——你从不比谁小。","相濡以沫，不如相忘于江湖，松手，也是一种深情。","独与天地精神往来，你本可以活得很辽阔。"]],
+          sushi:[["这阵子的{kw}真难熬，先别逞强，扛不住是人之常情。","失去的滋味我懂，那种钝钝的疼，不是说放下就能放下的。","世道的不公让人心凉，可你的日子，还能由你自己焐热。"],["先照顾好今晚的烟火，吃点热的，睡一觉，明日再看风雨。","允许自己狼狈一阵子，东坡当年也曾被风雨浇了个透。","别急着赶路，慢慢来，茶会热的，天也会亮的。"],["一蓑烟雨任平生——风雨里，照样能走出自己的步子。","此心安处是吾乡，心安在哪，哪里就是归处。","回首萧瑟处，也无风雨也无晴，一切都会过去。"]],
+          laozi:[["{kw}把你推得太急了，你抓得越紧，心就越累。","你想把一切都攥在手里，可越用力，它越从指缝里溜走。","未来还没来，你却已经替它先受了一遍苦。"],["先慢下一口气，让那股躁气自己沉到底。","顺着势走，不硬顶、不强求，路会自己铺开。","少用一点力，多留一点白，给自己松松绑。"],["上善若水，水从不争，却什么地方都能到达。","知足不辱，知止不殆，停下来不是认输，是归根。","夫唯不争，故天下莫能与之争——退一步，反而海阔天空。"]],
+          kongmeng:[["这份{kw}确实压在心口，被误解的委屈，最难咽下。","人和人之间的纠葛最耗神，你已经尽力周全了。","夹在道义与人情中间，两边都有分量，为难是应该的。"],["先守住自己的分寸，再慢慢辨明谁对谁错。","你可以仁厚，但不必没有边界，善良也该有锋芒。","能做的尽力去做，做不到的，也不必愧对自己。"],["君子和而不同，合不来，也可以各自体面。","己所不欲，勿施于人——你守住了这条，就没输。","君子坦荡荡，心正了，流言自会散去。"]],
+          aurelius:[["我看见{kw}正在你心里翻腾，那股失控的感觉，很真实。","愤怒上来的时候像一团火，先烧的，往往是握火的人。","外界的混乱在拉扯你，可它并不等于你也必须乱。"],["先分清哪些是你能控制的，哪些不是，把力气用对地方。","把判断权从情绪手里收回来，交还给清醒的你。","此刻不必胜过整个世界，只要胜过这一下的冲动。"],["宁静来自你的判断，而非环境——心定了，世界就静了。","你拥有支配自己心灵的力量，这一点谁都夺不走。","只关注你能控制之事，其余的，交给宇宙。"]],
+          nietzsche:[["别急着向{kw}低头，这一记重击，正在试炼你。","你痛得很深，我知道，可这痛里，藏着还没醒的力量。","深渊靠近的时候别躲开眼睛，那是你重估一切的起点。"],["把这份打击锻成阶梯，一级一级踩着它往上走。","站直了，别把一时的软弱，认作永远的命运。","你仍然可以命令自己，先从站起来这一件事开始。"],["那些杀不死你的，终将使你更强大。","成为你自己——不是别人期待的你，是你本来的你。","你不是碎了，你在重铸，烈火里站住的人才配拥有新生。"]],
+          camus:[["这种{kw}很冷，我听见了，日子重复到发木的感觉，真的难。","世界沉默不语的时候，人最容易觉得自己是多余的。","意义没有主动递到你手上，这不是你的错。"],["先别急着找答案，把今天好好活完，就已经是回答。","亲手给这一天放下一枚小小的意义，哪怕微不足道。","清醒地活着、不投降，这本身就是最漂亮的反抗。"],["必须想象西西弗斯是幸福的——推石头的人，也拥有山顶的风。","反抗，故我们存在，你还在较劲，就说明你还没输。","在隆冬，我终于知道，我身上有一个不可战胜的夏天。"]],
+          schopenhauer:[["你正被{kw}牵着走，那份得不到的痛，一点都不轻。","嫉妒最磨人，它让你盯着别人的灯，忘了自己脚下的路。","欲望像海水，越喝越渴，你不是贪心，是太累了。"],["试着少要一点，心就能少受一点刑。","先看破这层幻象——你以为非有不可的，多半没那么要紧。","把和别人的比较放远一些，你的夜路，只需你自己看清。"],["欲望是痛苦的根，减少欲望，便减少了枷锁。","人生在痛苦和无聊之间摇摆，看懂了这一点，反而自由。","幸福不过是痛苦暂歇的间隙，学会享受这间隙就好。"]],
+          adler:[["{kw}让你背了太多本不属于你的情绪，你已经很努力了。","你怕被讨厌，所以一直委屈自己去迎合，这真的很累。","不敢拒绝，不代表你软弱，只是你太在意别人了。"],["先分清这是谁的课题——别人的情绪，本该由别人负责。","把那些评价还回去，你没有义务让每个人都满意。","试着从一次真实的表达开始，哪怕只是小声说一个'不'。"],["课题分离，是温柔而清醒的边界。","自由，就是拥有被别人讨厌的勇气。","你的人生由你自己选择，不必活在别人的期待里。"]]
         };
-        const parts=bank[p.id]||bank.wangYangming, seed=(this.turns*7+keyword.length)%10;
-        const a=parts[0][seed%parts[0].length].replace("{kw}",keyword);
-        const b=parts[1][(seed+1)%parts[1].length].replace("{kw}",keyword);
-        const c=parts[2][(seed+2)%parts[2].length].replace("{kw}",keyword);
-        return a+"。"+b+"。"+c+"。";
+        const parts=bank[p.id]||bank.wangYangming;
+        // 混合进制枚举：按各自调用计数逐一走完 L0×L1×L2 种组合再循环，避免近距重复。
+        if(!this.smartCursor)this.smartCursor={};
+        const cur=this.smartCursor[p.id]||(this.smartCursor[p.id]={n:0});
+        const n=cur.n++;
+        const L0=parts[0].length,L1=parts[1].length,L2=parts[2].length;
+        const a=parts[0][n%L0].replace("{kw}",keyword);
+        const b=parts[1][((n/L0)|0)%L1];
+        const c=parts[2][((n/(L0*L1))|0)%L2];
+        return a+b+c;
       }
       type(bubble,text,done){ let i=0; this.typing=true; Dom.sendBtn.disabled=true; const tick=()=>{bubble.textContent=text.slice(0,i); Dom.messages.scrollTop=Dom.messages.scrollHeight; if(i<text.length){i++;setTimeout(tick,40);}else{this.typing=false;Dom.sendBtn.disabled=false;AppState.conversationHistory.push({role:"ai",text}); if(AppState.conversationHistory.length>40)AppState.conversationHistory.splice(0,AppState.conversationHistory.length-40); if(done)done();}}; tick(); }
     }
@@ -1985,11 +2267,12 @@
       },
       resize() { if (this.home) this.home.resize(); if (this.tree) this.tree.resize(); },
       visibility() { const hidden=document.visibilityState==="hidden"; if(this.home)(hidden?this.home.stop():this.home.startLoop()); if(this.tree)(hidden?this.tree.stop():this.tree.start()); },
-      degradeParticles() { if(this.home)this.home.reduceParticles(PerfConfig.degradeRatio); if(this.tree)this.tree.reduceParticles(PerfConfig.degradeRatio); showToast("已自动降低粒子数量以保持流畅"); },
+      // 分层自适应统一入口：把 0.4~1 的性能档位下发给首页与树引擎，二者据此缩放每帧绘制上限（可升可降，不销毁粒子）。
+      applyPerfScale(scale) { if(this.home)this.home.perfScale = scale; if(this.tree)this.tree.perfScale = scale; },
       async saveCard() {
         try {
           const config = AppState.currentPhilosopher || Philosophy.configs[0];
-          if (this.tree) this.tree.crystallize();
+          if (this.tree) { this.chat.cancelProgressAnimation(); this.tree.crystallize(); }
           await new Promise(resolve => setTimeout(resolve, 500));
           const treeImage = this.tree ? this.tree.getImageData() : "";
           const quote = config.card_quote_pool[(Math.random()*config.card_quote_pool.length)|0];
@@ -2014,7 +2297,7 @@
     /** 公共 API：获取树截图。 */
     window.getTreeImageData = () => App.tree ? App.tree.getImageData() : "";
     /** 公共 API：触发树结晶。 */
-    window.triggerCrystallize = () => App.tree && App.tree.crystallize();
+    window.triggerCrystallize = () => { if(App.chat)App.chat.cancelProgressAnimation(); if(App.tree)App.tree.crystallize(); };
     window.AppState = AppState;
   </script>
 </body>

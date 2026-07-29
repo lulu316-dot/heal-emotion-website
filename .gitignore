@@ -1,9 +1,19 @@
 # API 密钥配置（含明文 key，禁止上传）
 api-config.json
 api-config.js
+api-config.local.*
+.env
+.env.*
+!.env.example
 
 # 录屏 / 大媒体文件
 *.mp4
 
 # 备份副本
 *副本*.html
+
+# 本地编辑器 / 系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
