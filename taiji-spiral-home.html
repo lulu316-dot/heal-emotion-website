@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>太极旋转 + 星尘螺旋</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #0a0e1a;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #0a0e1a;
+    }
+
+    .fps {
+      position: fixed;
+      right: 12px;
+      bottom: 10px;
+      color: rgba(255,255,255,.45);
+      font: 12px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div class="fps" id="fps">FPS 60</div>
+
+  <script>
+    "use strict";
+
+    const canvas = document.getElementById("scene");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    const fpsNode = document.getElementById("fps");
+
+    const TAU = Math.PI * 2;
+    const DYNAMIC_COUNT = 24;
+    const STATIC_DUST_COUNT = 260;
+    const particles = new Array(DYNAMIC_COUNT);
+
+    let width = 1;
+    let height = 1;
+    let dpr = 1;
+    let cx = 1;
+    let cy = 1;
+    let spiralRadius = 1;
+    let angle = 0;
+    let raf = 0;
+    let running = true;
+    let lastFpsTime = performance.now();
+    let fpsFrames = 0;
+
+    const offscreen = document.createElement("canvas");
+    const offctx = offscreen.getContext("2d", { alpha: true });
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth;
+      height = window.innerHeight;
+      cx = width * .5;
+      cy = height * .5;
+      spiralRadius = Math.min(width, height) * .42;
+
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      offctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      prerenderSpiralDust();
+      resetDynamicParticles();
+    }
+
+    function prerenderSpiralDust() {
+      offctx.clearRect(0, 0, width, height);
+
+      const bg = offctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(width, height) * .65);
+      bg.addColorStop(0, "#101827");
+      bg.addColorStop(.62, "#0a0e1a");
+      bg.addColorStop(1, "#050711");
+      offctx.fillStyle = bg;
+      offctx.fillRect(0, 0, width, height);
+
+      // 离屏预渲染：260 个静态星尘点只绘制一次，主循环每帧 drawImage 即可。
+      for (let i = 0; i < STATIC_DUST_COUNT; i++) {
+        const t = i / STATIC_DUST_COUNT;
+        const arm = i % 2 === 0 ? 0 : Math.PI;
+        const theta = t * TAU * 3.8 + arm;
+        const radius = 18 + spiralRadius * t;
+        const jitter = Math.sin(i * 12.9898) * 5 + Math.cos(i * 78.233) * 4;
+        const x = cx + Math.cos(theta) * (radius + jitter);
+        const y = cy + Math.sin(theta) * (radius + jitter) * .64;
+        const size = .45 + (1 - t) * .9;
+        const alpha = .12 + (1 - t) * .28;
+
+        offctx.beginPath();
+        offctx.fillStyle = i % 11 === 0
+          ? "rgba(212,175,55," + alpha * .75 + ")"
+          : i % 3 === 0
+            ? "rgba(135,206,235," + alpha + ")"
+            : "rgba(226,232,240," + alpha + ")";
+        offctx.arc(x, y, size, 0, TAU);
+        offctx.fill();
+      }
+
+      offctx.save();
+      offctx.globalAlpha = .1;
+      offctx.strokeStyle = "rgba(135,206,235,.55)";
+      offctx.lineWidth = 1;
+      offctx.beginPath();
+      for (let i = 0; i < 220; i++) {
+        const t = i / 219;
+        const theta = t * TAU * 3.8;
+        const radius = 18 + spiralRadius * t;
+        const x = cx + Math.cos(theta) * radius;
+        const y = cy + Math.sin(theta) * radius * .64;
+        if (i === 0) offctx.moveTo(x, y);
+        else offctx.lineTo(x, y);
+      }
+      offctx.stroke();
+      offctx.restore();
+    }
+
+    function resetDynamicParticles() {
+      for (let i = 0; i < DYNAMIC_COUNT; i++) {
+        particles[i] = {
+          t: i / DYNAMIC_COUNT,
+          arm: i % 2 === 0 ? 0 : Math.PI,
+          speed: .00075 + (i % 5) * .00008,
+          size: 1.4 + (i % 4) * .35,
+          phase: i * .73,
+          color: i % 8 === 0 ? "212,175,55" : i % 3 === 0 ? "135,206,235" : "226,232,240"
+        };
+      }
+    }
+
+    function drawDynamicParticles(time) {
+      for (let i = 0; i < DYNAMIC_COUNT; i++) {
+        const p = particles[i];
+        p.t += p.speed;
+        if (p.t > 1) p.t -= 1;
+
+        const theta = p.t * TAU * 3.8 + p.arm + time * .18;
+        const radius = 18 + spiralRadius * p.t;
+        const x = cx + Math.cos(theta) * radius;
+        const y = cy + Math.sin(theta) * radius * .64;
+        const opacity = .35 + Math.sin(time * 2 + p.phase) * .22;
+
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(" + p.color + "," + opacity + ")";
+        ctx.arc(x, y, p.size, 0, TAU);
+        ctx.fill();
+      }
+    }
+
+    function drawTaiji(time) {
+      const r = 80;
+      const eye = 15;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angle);
+
+      ctx.beginPath();
+      ctx.fillStyle = "#f8fafc";
+      ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2);
+      ctx.arc(0, r / 2, r / 2, Math.PI / 2, -Math.PI / 2, true);
+      ctx.arc(0, -r / 2, r / 2, Math.PI / 2, -Math.PI / 2);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.fillStyle = "#0b1020";
+      ctx.arc(0, 0, r, Math.PI / 2, Math.PI * 1.5);
+      ctx.arc(0, -r / 2, r / 2, -Math.PI / 2, Math.PI / 2, true);
+      ctx.arc(0, r / 2, r / 2, -Math.PI / 2, Math.PI / 2);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.fillStyle = "#0b1020";
+      ctx.arc(0, -r / 2, eye, 0, TAU);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.fillStyle = "#f8fafc";
+      ctx.arc(0, r / 2, eye, 0, TAU);
+      ctx.fill();
+
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(226,232,240,.42)";
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, TAU);
+      ctx.stroke();
+
+      ctx.restore();
+
+      // 0.2 度/帧
+      angle += Math.PI / 900;
+    }
+
+    function frame(now) {
+      if (!running) return;
+      const time = now * .001;
+
+      // 每帧只绘制：离屏缓存背景 + 太极 + 24 个动态粒子。
+      ctx.drawImage(offscreen, 0, 0, width, height);
+      drawDynamicParticles(time);
+      drawTaiji(time);
+
+      fpsFrames++;
+      if (now - lastFpsTime >= 500) {
+        fpsNode.textContent = "FPS " + Math.round(fpsFrames * 1000 / (now - lastFpsTime));
+        fpsFrames = 0;
+        lastFpsTime = now;
+      }
+
+      raf = requestAnimationFrame(frame);
+    }
+
+    window.addEventListener("resize", resize, { passive: true });
+    document.addEventListener("visibilitychange", () => {
+      running = document.visibilityState === "visible";
+      if (running) {
+        lastFpsTime = performance.now();
+        fpsFrames = 0;
+        raf = requestAnimationFrame(frame);
+      } else {
+        cancelAnimationFrame(raf);
+      }
+    });
+
+    resize();
+    raf = requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

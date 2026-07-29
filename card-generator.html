@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>情绪卡片生成器</title>
+  <style>
+    /* =========================
+       页面演示布局与浮层样式
+       ========================= */
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: "Inter", "Noto Serif SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    .demo {
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 30% 20%, rgba(0, 191, 255, 0.13), transparent 28%),
+        radial-gradient(circle at 72% 68%, rgba(255, 165, 0, 0.11), transparent 26%),
+        #0f172a;
+    }
+
+    .panel {
+      width: min(520px, 92vw);
+      padding: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(14px);
+      text-align: center;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+    }
+
+    .panel h1 {
+      margin: 0 0 10px;
+      font: 600 24px/1.35 "Noto Serif SC", serif;
+      color: #fff;
+      letter-spacing: 0;
+    }
+
+    .panel p {
+      margin: 0 0 18px;
+      color: rgba(226, 232, 240, 0.68);
+      font-size: 14px;
+      line-height: 1.8;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    select,
+    button {
+      height: 42px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(10px);
+      font-size: 14px;
+    }
+
+    button {
+      cursor: pointer;
+      transition: transform 0.18s ease, background 0.18s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: none;
+      place-items: center;
+      padding: 18px;
+      background: rgba(2, 6, 23, 0.68);
+      backdrop-filter: blur(10px);
+    }
+
+    .modal.show {
+      display: grid;
+    }
+
+    .previewBox {
+      display: grid;
+      gap: 14px;
+      justify-items: center;
+      transform: translate3d(0, 14px, 0) scale(0.98);
+      opacity: 0;
+      transition: transform 0.22s ease, opacity 0.22s ease;
+    }
+
+    .modal.show .previewBox {
+      transform: translate3d(0, 0, 0) scale(1);
+      opacity: 1;
+    }
+
+    .previewBox img {
+      width: min(390px, 88vw);
+      height: auto;
+      max-height: min(680px, 78vh);
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.44);
+      background: #0f172a;
+    }
+
+    .modalActions {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      width: min(390px, 88vw);
+    }
+
+    .modalActions button {
+      flex: 1;
+      height: 40px;
+      border-radius: 20px;
+    }
+
+    @media (max-width: 520px) {
+      .controls {
+        grid-template-columns: 1fr;
+      }
+
+      .panel {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="demo">
+    <section class="panel">
+      <h1>情绪卡片生成器</h1>
+      <p>使用纯 Canvas 2D API 合成 390 × 680 竖版卡片。测试按钮会生成一张模拟粒子树截图并弹出预览。</p>
+      <div class="controls">
+        <select id="philosopherSelect" aria-label="选择哲学家"></select>
+        <button id="testBtn" type="button">生成测试卡片</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="cardModal" class="modal" aria-hidden="true">
+    <div class="previewBox">
+      <img id="cardPreview" alt="情绪卡片预览">
+      <div class="modalActions">
+        <button id="downloadBtn" type="button">保存到本地</button>
+        <button id="continueBtn" type="button">继续对话</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    "use strict";
+
+    /* =========================
+       哲学家示例数据：每人 3 句金句
+       ========================= */
+    const PHILOSOPHER_CONFIGS = [
+      {
+        id: "wangYangming",
+        name: "王阳明",
+        camp: "eastern",
+        color: "#87CEEB",
+        card_quote_pool: ["知是行之始，行是知之成。", "人须在事上磨，方立得住。", "此心光明，亦复何言。"]
+      },
+      {
+        id: "zhuangzi",
+        name: "庄子",
+        camp: "eastern",
+        color: "#2F4F4F",
+        card_quote_pool: ["天地与我并生，万物与我为一。", "相濡以沫，不如相忘于江湖。", "独与天地精神往来。"]
+      },
+      {
+        id: "sushi",
+        name: "苏轼",
+        camp: "eastern",
+        color: "#FFA500",
+        card_quote_pool: ["一蓑烟雨任平生。", "此心安处是吾乡。", "人间有味是清欢。"]
+      },
+      {
+        id: "laozi",
+        name: "老子",
+        camp: "eastern",
+        color: "#006994",
+        card_quote_pool: ["上善若水，水善利万物而不争。", "知足不辱，知止不殆。", "夫唯不争，故天下莫能与之争。"]
+      },
+      {
+        id: "kongmeng",
+        name: "孔孟",
+        camp: "eastern",
+        color: "#8B4513",
+        card_quote_pool: ["己所不欲，勿施于人。", "君子和而不同。", "穷则独善其身，达则兼济天下。"]
+      },
+      {
+        id: "aurelius",
+        name: "马可·奥勒留",
+        camp: "western",
+        color: "#F0F8FF",
+        card_quote_pool: ["你拥有支配心灵的力量。", "只关注你能控制之事。", "宁静来自判断，而非环境。"]
+      },
+      {
+        id: "nietzsche",
+        name: "尼采",
+        camp: "western",
+        color: "#8B0000",
+        card_quote_pool: ["那些杀不死我的，使我更强大。", "成为你自己。", "重估一切价值。"]
+      },
+      {
+        id: "camus",
+        name: "加缪",
+        camp: "western",
+        color: "#EDC9AF",
+        card_quote_pool: ["在隆冬，我终于知道，我身上有一个不可战胜的夏天。", "反抗，故我们存在。", "人必须想象西西弗斯是幸福的。"]
+      },
+      {
+        id: "schopenhauer",
+        name: "叔本华",
+        camp: "western",
+        color: "#4B0082",
+        card_quote_pool: ["人生是在痛苦和无聊之间摇摆。", "欲望是痛苦的根。", "减少欲望，便减少枷锁。"]
+      },
+      {
+        id: "adler",
+        name: "阿德勒",
+        camp: "western",
+        color: "#00BFFF",
+        card_quote_pool: ["一切烦恼皆源于人际关系。", "自由就是被别人讨厌的勇气。", "课题分离，是温柔的边界。"]
+      }
+    ];
+
+    const AUSPICIOUS_TEXT = {
+      wangYangming: "宜行动",
+      zhuangzi: "宜放下",
+      sushi: "宜品尝",
+      laozi: "宜静观",
+      kongmeng: "宜修身",
+      aurelius: "宜克制",
+      nietzsche: "宜重生",
+      camus: "宜反抗",
+      schopenhauer: "宜审美",
+      adler: "宜分离"
+    };
+
+    /* =========================
+       CardRenderer 类：核心绘制逻辑
+       ========================= */
+    class CardRenderer {
+      constructor() {
+        this.width = 390;
+        this.height = 680;
+        this.treeHeight = 374;
+        this.nameHeight = 68;
+        this.timeHeight = 34;
+        this.quoteHeight = 204;
+      }
+
+      /*
+        对外主入口：
+        - philosopherConfig: 哲学家配置
+        - treeImageData: getTreeImageData() 返回的 dataURL
+        - quote: 指定金句；如果为空则从池中随机抽取
+        返回 Promise<string>，结果为卡片 PNG dataURL。
+      */
+      async generate(philosopherConfig, treeImageData, quote) {
+        const config = philosopherConfig || PHILOSOPHER_CONFIGS[0];
+        const selectedQuote = quote || this.pickQuote(config);
+        const image = await this.loadImage(treeImageData);
+
+        /*
+          卡片 Canvas 只在生成时创建。生成 dataURL 后，释放宽高引用，
+          浏览器可回收其像素缓冲，避免长期占用内存。
+        */
+        const canvas = document.createElement("canvas");
+        canvas.width = this.width;
+        canvas.height = this.height;
+        const ctx = canvas.getContext("2d", { alpha: false });
+
+        this.drawBackground(ctx, config);
+        this.drawTreeImage(ctx, image, config);
+        this.drawNameBlock(ctx, config);
+        this.drawTimeBlock(ctx, config);
+        this.drawQuoteBlock(ctx, config, selectedQuote);
+
+        const dataUrl = canvas.toDataURL("image/png");
+        canvas.width = 0;
+        canvas.height = 0;
+        return dataUrl;
+      }
+
+      loadImage(src) {
+        return new Promise(function load(resolve, reject) {
+          const img = new Image();
+          img.onload = function onload() {
+            resolve(img);
+          };
+          img.onerror = reject;
+          img.src = src;
+        });
+      }
+
+      pickQuote(config) {
+        const pool = config.card_quote_pool || [""];
+        return pool[(Math.random() * pool.length) | 0];
+      }
+
+      drawBackground(ctx, config) {
+        if (config.camp === "eastern") {
+          ctx.fillStyle = "#1a1a2e";
+          ctx.fillRect(0, 0, this.width, this.height);
+
+          /*
+            极淡水墨纹理：
+            使用几层径向渐变模拟墨痕扩散，不依赖图片资源。
+          */
+          let g = ctx.createRadialGradient(90, 180, 10, 90, 180, 250);
+          g.addColorStop(0, "rgba(255,255,255,0.045)");
+          g.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, this.width, this.height);
+
+          g = ctx.createRadialGradient(320, 560, 20, 320, 560, 240);
+          g.addColorStop(0, "rgba(0,0,0,0.18)");
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, this.width, this.height);
+        } else {
+          ctx.fillStyle = "#0f172a";
+          ctx.fillRect(0, 0, this.width, this.height);
+
+          /*
+            极淡网格线：
+            Canvas 中手动绘制，等价于 CSS linear-gradient 的视觉。
+          */
+          ctx.save();
+          ctx.globalAlpha = 0.08;
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let x = 0; x <= this.width; x += 24) {
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, this.height);
+          }
+          for (let y = 0; y <= this.height; y += 24) {
+            ctx.moveTo(0, y);
+            ctx.lineTo(this.width, y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      drawTreeImage(ctx, image, config) {
+        /*
+          居中裁剪：
+          用 cover 算法保留粒子树主画面，避免拉伸变形。
+        */
+        const targetW = this.width;
+        const targetH = this.treeHeight;
+        const scale = Math.max(targetW / image.width, targetH / image.height);
+        const sw = targetW / scale;
+        const sh = targetH / scale;
+        const sx = (image.width - sw) * 0.5;
+        const sy = (image.height - sh) * 0.5;
+        ctx.drawImage(image, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+        /*
+          底部 40px 过渡到背景：
+          用 destination 不会破坏树光效，只在底边叠加暗色渐变。
+        */
+        const fadeEnd = config.camp === "eastern" ? "rgba(26,26,46,0.96)" : "rgba(15,23,42,0.96)";
+        const fade = ctx.createLinearGradient(0, targetH - 40, 0, targetH);
+        fade.addColorStop(0, "rgba(15,23,42,0)");
+        fade.addColorStop(1, fadeEnd);
+        ctx.fillStyle = fade;
+        ctx.fillRect(0, targetH - 40, targetW, 40);
+      }
+
+      drawNameBlock(ctx, config) {
+        const y = this.treeHeight;
+        if (config.camp === "eastern") {
+          ctx.save();
+          ctx.fillStyle = "#e2e8f0";
+          ctx.font = "28px 'Noto Serif SC', 'Songti SC', serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          this.drawVerticalText(ctx, config.name, 326, y + 4, 22);
+          this.drawSeal(ctx, config.name.charAt(0), 344, y + 38);
+          ctx.restore();
+        } else {
+          ctx.save();
+          this.drawGeometryLogo(ctx, 38, y + 20, config.color);
+          ctx.fillStyle = "#e2e8f0";
+          ctx.font = "600 24px Inter, Arial, sans-serif";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          ctx.fillText(config.name, 72, y + this.nameHeight * 0.5);
+          ctx.restore();
+        }
+      }
+
+      drawSeal(ctx, text, x, y) {
+        ctx.save();
+        ctx.translate(x + 12, y + 12);
+        ctx.rotate(-5 * Math.PI / 180);
+        ctx.strokeStyle = "rgba(220,38,38,0.92)";
+        ctx.fillStyle = "rgba(220,38,38,0.82)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-12, -12, 24, 24);
+        ctx.font = "14px 'Noto Serif SC', serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, 0, 1);
+        ctx.restore();
+      }
+
+      drawGeometryLogo(ctx, x, y, color) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, y + 22);
+        ctx.lineTo(x + 16, y);
+        ctx.lineTo(x + 32, y + 22);
+        ctx.closePath();
+        ctx.moveTo(x + 7, y + 22);
+        ctx.lineTo(x + 16, y + 8);
+        ctx.lineTo(x + 25, y + 22);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      drawTimeBlock(ctx, config) {
+        const y = this.treeHeight + this.nameHeight;
+        const text = this.formatTime(config);
+        ctx.save();
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.font = "12px Inter, Arial, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, this.width * 0.5, y + this.timeHeight * 0.5);
+        ctx.restore();
+      }
+
+      formatTime(config) {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const day = String(now.getDate()).padStart(2, "0");
+        const hour = String(now.getHours()).padStart(2, "0");
+        const minute = String(now.getMinutes()).padStart(2, "0");
+        return year + "." + month + "." + day + " · " + hour + ":" + minute + " · " + (AUSPICIOUS_TEXT[config.id] || "宜释怀");
+      }
+
+      drawQuoteBlock(ctx, config, quote) {
+        const y = this.treeHeight + this.nameHeight + this.timeHeight;
+        if (config.camp === "eastern") {
+          ctx.save();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "24px 'Noto Serif SC', 'Songti SC', serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          this.drawVerticalQuote(ctx, "「" + quote + "」", 270, y + 22, 32, 150);
+          ctx.restore();
+        } else {
+          ctx.save();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "20px Georgia, 'Times New Roman', serif";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "top";
+          this.drawWrappedText(ctx, "“" + quote + "”", 42, y + 32, 306, 32);
+          ctx.strokeStyle = "rgba(255,255,255,0.34)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(42, y + this.quoteHeight - 34);
+          ctx.lineTo(348, y + this.quoteHeight - 34);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      /*
+        Canvas 没有稳定跨浏览器竖排文字 API。
+        这里逐字绘制，实现 writing-mode: vertical-rl 的核心视觉。
+      */
+      drawVerticalText(ctx, text, x, y, gap) {
+        for (let i = 0; i < text.length; i++) {
+          ctx.fillText(text.charAt(i), x, y + i * gap);
+        }
+      }
+
+      drawVerticalQuote(ctx, text, startX, startY, gap, maxHeight) {
+        let x = startX;
+        let y = startY;
+        for (let i = 0; i < text.length; i++) {
+          ctx.fillText(text.charAt(i), x, y);
+          y += gap;
+          if (y > startY + maxHeight) {
+            y = startY;
+            x -= 38;
+          }
+        }
+      }
+
+      drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
+        let line = "";
+        let yy = y;
+        for (let i = 0; i < text.length; i++) {
+          const test = line + text.charAt(i);
+          if (ctx.measureText(test).width > maxWidth && line) {
+            ctx.fillText(line, x, yy);
+            line = text.charAt(i);
+            yy += lineHeight;
+          } else {
+            line = test;
+          }
+        }
+        if (line) ctx.fillText(line, x, yy);
+      }
+    }
+
+    /* =========================
+       CardPreviewModal：预览浮层
+       ========================= */
+    class CardPreviewModal {
+      constructor(modalEl, imageEl) {
+        this.modalEl = modalEl;
+        this.imageEl = imageEl;
+        this.currentDataUrl = "";
+        this.modalEl.addEventListener("click", this.onBackdropClick.bind(this));
+      }
+
+      show(dataUrl) {
+        this.currentDataUrl = dataUrl;
+        this.imageEl.src = dataUrl;
+        this.modalEl.classList.add("show");
+        this.modalEl.setAttribute("aria-hidden", "false");
+      }
+
+      close() {
+        this.modalEl.classList.remove("show");
+        this.modalEl.setAttribute("aria-hidden", "true");
+      }
+
+      onBackdropClick(event) {
+        if (event.target === this.modalEl) this.close();
+      }
+    }
+
+    /* =========================
+       DownloadManager：下载管理
+       ========================= */
+    class DownloadManager {
+      static download(dataUrl, philosopherName) {
+        const now = new Date();
+        const stamp =
+          now.getFullYear() +
+          String(now.getMonth() + 1).padStart(2, "0") +
+          String(now.getDate()).padStart(2, "0");
+        const a = document.createElement("a");
+        a.href = dataUrl;
+        a.download = "情绪之树_" + philosopherName + "_" + stamp + ".png";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    }
+
+    /* =========================
+       演示用粒子树截图与交互流程
+       ========================= */
+    const renderer = new CardRenderer();
+    const selectEl = document.getElementById("philosopherSelect");
+    const testBtn = document.getElementById("testBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const continueBtn = document.getElementById("continueBtn");
+    const modal = new CardPreviewModal(
+      document.getElementById("cardModal"),
+      document.getElementById("cardPreview")
+    );
+    let lastConfig = PHILOSOPHER_CONFIGS[0];
+
+    for (let i = 0; i < PHILOSOPHER_CONFIGS.length; i++) {
+      const option = document.createElement("option");
+      option.value = String(i);
+      option.textContent = PHILOSOPHER_CONFIGS[i].name;
+      selectEl.appendChild(option);
+    }
+
+    /*
+      真实对话页接入时，可替换为：
+      triggerCrystallize();
+      setTimeout(async () => {
+        const treeImageData = getTreeImageData();
+        const quote = pickQuote(currentPhilosopher);
+        const dataURL = await generateCard(currentPhilosopher, treeImageData, quote);
+        modal.show(dataURL);
+      }, 500);
+    */
+    testBtn.addEventListener("click", async function onGenerateTest() {
+      testBtn.disabled = true;
+      testBtn.textContent = "生成中...";
+      lastConfig = PHILOSOPHER_CONFIGS[Number(selectEl.value)];
+      const quote = lastConfig.card_quote_pool[(Math.random() * lastConfig.card_quote_pool.length) | 0];
+      const treeImageData = createMockTreeImage(lastConfig);
+      const startedAt = performance.now();
+      const cardDataUrl = await window.generateCard(lastConfig, treeImageData, quote);
+      console.log("card generated in", Math.round(performance.now() - startedAt), "ms");
+      modal.show(cardDataUrl);
+      testBtn.disabled = false;
+      testBtn.textContent = "生成测试卡片";
+    });
+
+    downloadBtn.addEventListener("click", function onDownload() {
+      if (modal.currentDataUrl) DownloadManager.download(modal.currentDataUrl, lastConfig.name);
+    });
+
+    continueBtn.addEventListener("click", function onContinue() {
+      modal.close();
+    });
+
+    /*
+      生成一张本地模拟树图，保证单文件双击即可测试。
+      真实项目中此处由 getTreeImageData() 提供。
+    */
+    function createMockTreeImage(config) {
+      const c = document.createElement("canvas");
+      c.width = 390;
+      c.height = 374;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(0, 0, c.width, c.height);
+
+      const glow = ctx.createRadialGradient(195, 230, 10, 195, 230, 190);
+      glow.addColorStop(0, makeRgba(config.color, 0.32));
+      glow.addColorStop(1, "rgba(15,23,42,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, c.width, c.height);
+
+      ctx.save();
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = config.color;
+      for (let i = 0; i < 160; i++) {
+        const t = i / 159;
+        const side = (i % 2 ? 1 : -1) * t * t * 96 * Math.sin(i * 0.7);
+        const x = 195 + side + Math.sin(i * 1.9) * 18;
+        const y = 322 - t * 230 + Math.cos(i * 0.8) * 8;
+        ctx.globalAlpha = 0.45 + Math.random() * 0.45;
+        ctx.fillStyle = Math.random() > 0.72 ? "#ffffff" : config.color;
+        ctx.beginPath();
+        ctx.arc(x, y, 1.6 + Math.random() * 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      const data = c.toDataURL("image/png");
+      c.width = 0;
+      c.height = 0;
+      return data;
+    }
+
+    function makeRgba(hex, alpha) {
+      const n = parseInt(hex.slice(1), 16);
+      return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")";
+    }
+
+    /*
+      全局函数：对话页保存按钮可直接调用。
+      generateCard(philosopherConfig, treeImageData, quote) => Promise<dataURL>
+    */
+    window.generateCard = function generateCard(philosopherConfig, treeImageData, quote) {
+      return renderer.generate(philosopherConfig, treeImageData, quote);
+    };
+
+    /*
+      对话页完整保存流程接口：
+      1. 若存在 triggerCrystallize，则先让树短暂结晶。
+      2. 等待 0.5 秒后用 getTreeImageData 截图。
+      3. 随机抽一句金句并生成卡片。
+      4. 弹出预览浮层，供用户下载或继续对话。
+    */
+    window.saveEmotionCardFlow = async function saveEmotionCardFlow(philosopherConfig) {
+      const config = philosopherConfig || lastConfig || PHILOSOPHER_CONFIGS[0];
+      lastConfig = config;
+      if (typeof window.triggerCrystallize === "function") {
+        window.triggerCrystallize();
+      }
+      await new Promise(function wait(resolve) {
+        setTimeout(resolve, 500);
+      });
+      const treeImageData = typeof window.getTreeImageData === "function"
+        ? window.getTreeImageData()
+        : createMockTreeImage(config);
+      const quote = config.card_quote_pool[(Math.random() * config.card_quote_pool.length) | 0];
+      const dataUrl = await window.generateCard(config, treeImageData, quote);
+      modal.show(dataUrl);
+      return dataUrl;
+    };
+
+    window.PHILOSOPHER_CONFIGS = PHILOSOPHER_CONFIGS;
+  </script>
+</body>
+</html>

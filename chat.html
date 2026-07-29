@@ -1,0 +1,1111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>跨时空情感疗愈</title>
+  <style>
+    /* =========================
+       布局与样式
+       ========================= */
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: "Noto Serif SC", "Songti SC", "Microsoft YaHei", serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      background: #0f172a;
+      color: rgba(255, 255, 255, 0.72);
+      font-size: 18px;
+      letter-spacing: 0;
+      transition: opacity 0.45s ease;
+    }
+
+    #loading.hide {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .app {
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 40% 60%;
+      background: #0f172a;
+      opacity: 0;
+      transition: opacity 0.45s ease;
+    }
+
+    .app.ready {
+      opacity: 1;
+    }
+
+    .treePane {
+      position: relative;
+      min-width: 0;
+      background: #0f172a;
+      border-right: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    #treeCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #0f172a;
+    }
+
+    .chatPane {
+      min-width: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: #0f172a;
+    }
+
+    .mentorBar {
+      height: 80px;
+      flex: 0 0 80px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      transition: opacity 0.3s ease;
+    }
+
+    .mentorBar.fade {
+      opacity: 0;
+    }
+
+    .avatar {
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #0f172a;
+      font-weight: 700;
+      box-shadow: 0 0 24px rgba(255, 255, 255, 0.16);
+    }
+
+    .mentorText {
+      min-width: 0;
+    }
+
+    .mentorName {
+      font-size: 16px;
+      color: rgba(255, 255, 255, 0.92);
+      line-height: 1.3;
+    }
+
+    .mentorSlogan {
+      margin-top: 4px;
+      font-size: 13px;
+      color: rgba(226, 232, 240, 0.62);
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .loadingDots {
+      display: inline-flex;
+      gap: 6px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
+    .loadingDots span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.72);
+      animation: blink 1s ease-in-out infinite;
+    }
+
+    .loadingDots span:nth-child(2) {
+      animation-delay: 0.16s;
+    }
+
+    .loadingDots span:nth-child(3) {
+      animation-delay: 0.32s;
+    }
+
+    .orb {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-top-color: rgba(255, 255, 255, 0.86);
+      animation: spin 0.85s linear infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 0.24; transform: translateY(0); }
+      50% { opacity: 1; transform: translateY(-2px); }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .messages {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 24px clamp(18px, 4vw, 56px);
+      scroll-behavior: smooth;
+    }
+
+    .message {
+      display: flex;
+      margin-bottom: 16px;
+    }
+
+    .message.user {
+      justify-content: flex-end;
+    }
+
+    .bubble {
+      max-width: 70%;
+      overflow-wrap: anywhere;
+    }
+
+    .message.user .bubble {
+      padding: 11px 16px;
+      border-radius: 16px;
+      background: #1e3a8a;
+      color: #ffffff;
+      font: 15px/1.7 "Microsoft YaHei", sans-serif;
+    }
+
+    .message.ai .bubble {
+      color: #e2e8f0;
+      font: 16px/1.8 "Noto Serif SC", "Songti SC", serif;
+      letter-spacing: 0;
+      text-shadow: 0 0 20px rgba(255, 255, 255, 0.08);
+    }
+
+    .inputArea {
+      height: 80px;
+      flex: 0 0 80px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .inputWrap {
+      flex: 1 1 auto;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(14px);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .inputWrap.focused {
+      border-color: var(--mentor-color, #87CEEB);
+      box-shadow: 0 0 18px var(--mentor-glow, rgba(135, 206, 235, 0.38));
+    }
+
+    #userInput {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      outline: 0;
+      padding: 0 18px;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 16px;
+      font-family: "Microsoft YaHei", sans-serif;
+    }
+
+    #userInput::placeholder {
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    #sendBtn,
+    #saveBtn,
+    #closePreview {
+      border: 0;
+      cursor: pointer;
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(14px);
+    }
+
+    #sendBtn {
+      width: 48px;
+      height: 48px;
+      flex: 0 0 48px;
+      border-radius: 50%;
+      font-size: 24px;
+      line-height: 1;
+      transition: transform 0.16s ease, background 0.16s ease;
+    }
+
+    #sendBtn:hover,
+    #saveBtn:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    #sendBtn:disabled {
+      cursor: default;
+      opacity: 0.42;
+      transform: none;
+    }
+
+    #saveBtn {
+      position: fixed;
+      top: max(16px, env(safe-area-inset-top));
+      right: 16px;
+      z-index: 10;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      font-size: 22px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+    }
+
+    .preview {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: none;
+      place-items: center;
+      padding: 20px;
+      background: rgba(2, 6, 23, 0.72);
+      backdrop-filter: blur(16px);
+    }
+
+    .preview.show {
+      display: grid;
+    }
+
+    .card {
+      width: min(420px, 92vw);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.94);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+      overflow: hidden;
+    }
+
+    .card img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+      background: #0f172a;
+    }
+
+    .cardBody {
+      padding: 16px 18px 18px;
+    }
+
+    .cardTitle {
+      font-size: 18px;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    .cardText {
+      color: rgba(226, 232, 240, 0.72);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    #closePreview {
+      margin-top: 14px;
+      height: 36px;
+      padding: 0 16px;
+      border-radius: 18px;
+    }
+
+    @media (max-width: 768px) {
+      .app {
+        grid-template-columns: 1fr;
+        grid-template-rows: 40vh 60vh;
+      }
+
+      .treePane {
+        border-right: 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .mentorBar {
+        height: 72px;
+        flex-basis: 72px;
+        padding: 14px 16px;
+      }
+
+      .messages {
+        padding: 18px 16px;
+      }
+
+      .bubble {
+        max-width: 82%;
+      }
+
+      .inputArea {
+        height: 76px;
+        flex-basis: 76px;
+        padding: 14px 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">智慧正在汇聚...</div>
+  <button id="saveBtn" type="button" title="保存此刻">📷</button>
+
+  <main id="app" class="app">
+    <section class="treePane">
+      <canvas id="treeCanvas" aria-hidden="true"></canvas>
+    </section>
+    <section class="chatPane">
+      <header id="mentorBar" class="mentorBar"></header>
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <footer class="inputArea">
+        <div id="inputWrap" class="inputWrap">
+          <input id="userInput" autocomplete="off" placeholder="写下你的心声...">
+        </div>
+        <button id="sendBtn" type="button" aria-label="发送">→</button>
+      </footer>
+    </section>
+  </main>
+
+  <div id="preview" class="preview">
+    <div class="card">
+      <img id="previewImage" alt="粒子生命树此刻截图">
+      <div class="cardBody">
+        <div id="previewTitle" class="cardTitle">保存此刻</div>
+        <div id="previewText" class="cardText">卡片生成逻辑接口已预留，可接入模块⑤完成正式海报。</div>
+        <button id="closePreview" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    "use strict";
+
+    /* =========================
+       匹配逻辑
+       ========================= */
+    const PHILOSOPHERS = [
+      { id: "wangYangming", name: "王阳明", camp: "eastern", initial: "阳", color: "#87CEEB", slogan: "心上用功，事上见真章。", tags: ["焦虑", "工作做不完", "内耗", "拖延", "迷茫", "想太多", "行动困难"] },
+      { id: "zhuangzi", name: "庄子", camp: "eastern", initial: "庄", color: "#2F4F4F", slogan: "天地很大，别把自己困成一只杯。", tags: ["同辈压力", "容貌焦虑", "内卷", "比较", "求而不得"] },
+      { id: "sushi", name: "苏轼", camp: "eastern", initial: "苏", color: "#FFA500", slogan: "风雨来时，也可煮茶。", tags: ["失恋", "低谷", "不公", "熬不下去", "挫折"] },
+      { id: "laozi", name: "老子", camp: "eastern", initial: "老", color: "#006994", slogan: "少一点用力，多一点顺势。", tags: ["控制欲", "恐慌未来", "争强好胜", "失控"] },
+      { id: "kongmeng", name: "孔孟", camp: "eastern", initial: "儒", color: "#8B4513", slogan: "立身有道，处世有仁。", tags: ["职场委屈", "人际纠葛", "道德困境", "被误解"] },
+      { id: "aurelius", name: "马可·奥勒留", camp: "western", initial: "奥", color: "#F0F8FF", slogan: "控制你能控制的，其余归于宇宙。", tags: ["情绪失控", "愤怒", "不可控焦虑", "冲动"] },
+      { id: "nietzsche", name: "尼采", camp: "western", initial: "尼", color: "#8B0000", slogan: "把深渊锻成阶梯。", tags: ["虚无主义", "抑郁", "重大打击", "软弱", "绝望"] },
+      { id: "camus", name: "加缪", camp: "western", initial: "加", color: "#EDC9AF", slogan: "看清荒诞，然后继续生活。", tags: ["生活没意思", "每天重复", "重复", "无意义", "荒诞感", "虚无", "麻木"] },
+      { id: "schopenhauer", name: "叔本华", camp: "western", initial: "叔", color: "#4B0082", slogan: "看破欲望，痛苦便少一半。", tags: ["欲望痛苦", "物质焦虑", "嫉妒", "无聊", "空虚"] },
+      { id: "adler", name: "阿德勒", camp: "western", initial: "阿", color: "#00BFFF", slogan: "你不必被别人的期待定义。", tags: ["讨好", "讨好别人", "很累", "社恐", "被绑架", "怕被讨厌", "不敢拒绝"] }
+    ];
+
+    const REPLIES = {
+      wangYangming: [
+        "我知道你被事压住了。先做眼前一小步，心就会亮一点。知行合一，行处即是心安。",
+        "你不是无能，只是心被万念缠住了。取一件最小的事去做。人须在事上磨。",
+        "焦虑多半来自未行动的念头。把今日能做的列一件，立刻落下。此心光明，亦复何言。",
+        "别急着责备自己。心定下来，手先动起来。知是行之始，行是知之成。",
+        "你已经看见困局了，这就是起点。少想十步，先行一步。破心中贼，正在此刻。"
+      ],
+      zhuangzi: [
+        "你被他人的尺子量疼了。鱼不必学鸟飞，云也不必排队。相忘于江湖，自有逍遥。",
+        "这世上本多喧闹，别把它全搬进心里。天地与我并生，万物与我为一。",
+        "求不得时，先松开手看看。手空了，风才进得来。独与天地精神往来。",
+        "他们跑他们的，你游你的。大鹏不与小雀争枝。至人无己，神人无功。",
+        "美丑得失，常是人间小梦。醒一醒，杯中也有大江湖。物我两忘，心自轻。"
+      ],
+      sushi: [
+        "这阵子真难熬，先别逞强。吃点热的，睡一觉，明日再看风雨。一蓑烟雨任平生。",
+        "失去很痛，我懂。可月亮不因一夜阴云就消失。此心安处是吾乡。",
+        "不公让人心冷，但你还可以把日子过热。人间有味是清欢。",
+        "先允许自己狼狈。东坡也曾被风雨打湿。回首萧瑟处，也无风雨也无晴。",
+        "你不是走到尽头，只是行到坡上。慢慢来，茶会热，天会亮。人生如逆旅。"
+      ],
+      laozi: [
+        "你抓得太紧，所以心很累。先松一寸，水自会找到路。上善若水，利万物而不争。",
+        "未来未至，不必先替它受苦。静下来，躁气会自己沉底。知止不殆。",
+        "争强久了，人会忘记为何出发。退一步，不是败，是归根。夫唯不争，故无尤。",
+        "控制不了的，就交还天地。你只守住呼吸与当下。反者道之动。",
+        "别急着把一切弄明白。混沌中也有路。道常无为，而无不为。"
+      ],
+      kongmeng: [
+        "这份委屈确实压心。先守住分寸，再辨明是非。君子和而不同。",
+        "人际纠葛最耗气。你可仁厚，但不必无边界。己所不欲，勿施于人。",
+        "道德困境难在两边都有重量。先问何者合义。义之所在，虽千万人吾往矣。",
+        "被误解时，先不乱其心。日久见其行。人不知而不愠，不亦君子乎。",
+        "责任重，心更要正。能做的尽力，不能做的不愧。君子坦荡荡。"
+      ],
+      aurelius: [
+        "你的怒意很强，但它不必做你的主人。先分清可控与不可控。宁静来自判断。",
+        "失控感会逼人反击。停一息，把权力交还理性。你拥有支配心灵的力量。",
+        "外界混乱，不等于你必须混乱。守住行动，放下结果。只关注你能控制之事。",
+        "愤怒像火，先烧持火者。把它转为纪律。阻碍行动的，反而推进行动。",
+        "此刻不需要胜过世界，只需胜过冲动。按自然生活，便是按理性生活。"
+      ],
+      nietzsche: [
+        "你痛得很深，但别急着跪下。把这击打炼成力量。杀不死你的，使你更强大。",
+        "虚无不是终点，是旧价值塌了。站起来，重估一切价值。",
+        "别把软弱装成命运。你仍可命令自己。成为你自己。",
+        "深渊逼近时，眼睛别躲。凝视它，然后跨过去。人是通向超人的绳索。",
+        "你不是碎了，你在重铸。烈火中站住，才配拥有新生。成为你所是。"
+      ],
+      camus: [
+        "这种无意义感很冷，我听见了。先别求答案，继续把今天活完。必须想象西西弗斯幸福。",
+        "重复会磨空人，但清醒本身就是反抗。反抗，故我们存在。",
+        "世界沉默，并不代表你也要沉默。点一盏小灯，继续走。在隆冬里有夏天。",
+        "荒诞不会消失，可你能选择姿态。看清，然后不投降。清醒地活着，就是反抗。",
+        "生活没有递来意义，我们就亲手放下一枚。没有轻蔑征服不了的命运。"
+      ],
+      schopenhauer: [
+        "你的痛苦被欲望牵着走。先少要一点，心会少受一点刑。欲望是痛苦的根。",
+        "嫉妒让人盯着别人的灯，忘了自己的夜路。减少欲望，便减少枷锁。",
+        "物质焦虑像海水，越喝越渴。退一步，看清幻象。幸福只是痛苦暂歇。",
+        "无聊不是空白，是意志暂时失去目标。看破它，别被它拖走。",
+        "世界不会因你渴望而温柔。少幻想，少受苦。人生在痛苦和无聊间摇摆。"
+      ],
+      adler: [
+        "讨好真的很累，你背了太多别人的情绪。先分清谁的课题。课题分离，是温柔的边界。",
+        "你害怕被讨厌，所以一直委屈自己。自由就是被别人讨厌的勇气。",
+        "不敢拒绝，不代表你善良到无边。你也有位置。你的人生由你自己选择。",
+        "社交里的紧张可以理解。先从一个真实表达开始。贡献感带来归属感。",
+        "别人失望，不等于你做错。把他人的评价还给他。不要活在别人的课题里。"
+      ]
+    };
+
+    const FUZZY = {
+      焦虑: ["焦虑", "慌", "担心", "做不完", "压力", "工作"],
+      讨好: ["讨好", "讨好别人", "不敢拒绝", "怕别人", "很累"],
+      重复: ["重复", "每天", "没意思", "无意义", "好没意思"],
+      失恋: ["失恋", "分手", "前任", "放不下"],
+      愤怒: ["愤怒", "生气", "暴躁", "火大"],
+      内卷: ["内卷", "比较", "同龄人", "排名"],
+      控制: ["控制", "失控", "必须", "未来"],
+      虚无: ["虚无", "没意义", "空", "绝望"],
+      嫉妒: ["嫉妒", "羡慕", "眼红"]
+    };
+
+    function scoreTag(text, tag) {
+      let score = text.indexOf(tag) >= 0 ? 3 : 0;
+      const keys = Object.keys(FUZZY);
+      for (let i = 0; i < keys.length; i++) {
+        if (tag.indexOf(keys[i]) >= 0 || text.indexOf(keys[i]) >= 0) {
+          const words = FUZZY[keys[i]];
+          for (let j = 0; j < words.length; j++) {
+            if (text.indexOf(words[j]) >= 0) score++;
+          }
+        }
+      }
+      return score;
+    }
+
+    function matchPhilosopher(userText, camp) {
+      const text = String(userText || "");
+      let bestScore = -1;
+      let best = PHILOSOPHERS[0];
+      for (let i = 0; i < PHILOSOPHERS.length; i++) {
+        const p = PHILOSOPHERS[i];
+        if (camp && p.camp !== camp) continue;
+        let score = 0;
+        for (let j = 0; j < p.tags.length; j++) {
+          score += scoreTag(text, p.tags[j]);
+        }
+        if (score > bestScore || (score === bestScore && Math.random() > 0.5)) {
+          bestScore = score;
+          best = p;
+        }
+      }
+      return bestScore <= 0 ? PHILOSOPHERS[(Math.random() * PHILOSOPHERS.length) | 0] : best;
+    }
+
+    /* 测试用例：浏览器控制台可查看结果 */
+    console.log("测试1", matchPhilosopher("我最近很焦虑，工作做不完").name, "期望：王阳明");
+    console.log("测试2", matchPhilosopher("我总觉得讨好别人很累").name, "期望：阿德勒");
+    console.log("测试3", matchPhilosopher("生活好没意思，每天重复").name, "期望：加缪");
+
+    /* =========================
+       粒子树集成
+       ========================= */
+    const TREE_CONFIGS = {
+      default: { color: "#64748b", secondary: "#e2e8f0", trajectory: "straight", bloom: "breath" },
+      wangYangming: { color: "#87CEEB", secondary: "#ffffff", trajectory: "straight", bloom: "breath" },
+      zhuangzi: { color: "#2F4F4F", secondary: "#8fbc8f", trajectory: "fluid", bloom: "butterfly" },
+      sushi: { color: "#FFA500", secondary: "#ff6347", trajectory: "curve", bloom: "petal" },
+      laozi: { color: "#006994", secondary: "#87ceeb", trajectory: "spiral", bloom: "yinyang" },
+      kongmeng: { color: "#8B4513", secondary: "#daa520", trajectory: "pyramid", bloom: "canopy" },
+      aurelius: { color: "#F0F8FF", secondary: "#c0c0c0", trajectory: "stack", bloom: "stillness" },
+      nietzsche: { color: "#8B0000", secondary: "#ffd700", trajectory: "lightning", bloom: "explosion" },
+      camus: { color: "#EDC9AF", secondary: "#8b7355", trajectory: "sway", bloom: "boulder" },
+      schopenhauer: { color: "#4B0082", secondary: "#9370db", trajectory: "pendulum", bloom: "mist" },
+      adler: { color: "#00BFFF", secondary: "#ffffff", trajectory: "network", bloom: "crystal" }
+    };
+
+    const POOL_SIZE = 200;
+    const LUT_SIZE = 2048;
+    const MASK = LUT_SIZE - 1;
+    const TAU = Math.PI * 2;
+    const sinLut = new Float32Array(LUT_SIZE);
+    const cosLut = new Float32Array(LUT_SIZE);
+    const randomLut = new Float32Array(LUT_SIZE);
+    let seed = 20260709;
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const a = i / LUT_SIZE * TAU;
+      sinLut[i] = Math.sin(a);
+      cosLut[i] = Math.cos(a);
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      randomLut[i] = seed / 4294967296;
+    }
+
+    function li(v) {
+      return (v | 0) & MASK;
+    }
+
+    function easeOutCubic(t) {
+      const n = 1 - t;
+      return 1 - n * n * n;
+    }
+
+    function makeRgba(hex, alpha) {
+      const n = parseInt(hex.slice(1), 16);
+      return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")";
+    }
+
+    class Particle {
+      constructor(index) {
+        this.index = index;
+        this.x = 0;
+        this.y = 0;
+        this.tx = 0;
+        this.ty = 0;
+        this.fx = 0;
+        this.fy = 0;
+        this.seedA = randomLut[li(index * 17 + 1)];
+        this.seedB = randomLut[li(index * 31 + 7)];
+        this.seedC = randomLut[li(index * 47 + 13)];
+        this.phase = (this.seedA * LUT_SIZE) | 0;
+        this.layer = index / (POOL_SIZE - 1);
+        this.side = this.seedB > 0.5 ? 1 : -1;
+        this.radius = 1.5 + this.seedC * 2.1;
+        this.opacity = 0.7;
+      }
+    }
+
+    class TreeEngine {
+      constructor(canvas, id) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext("2d", { alpha: false });
+        this.pool = new Array(POOL_SIZE);
+        for (let i = 0; i < POOL_SIZE; i++) this.pool[i] = new Particle(i);
+        this.width = 1;
+        this.height = 1;
+        this.rootX = 1;
+        this.rootY = 1;
+        this.treeH = 1;
+        this.dpr = 1;
+        this.frame = 0;
+        this.progress = 0;
+        this.targetProgress = 0;
+        this.crystallizing = false;
+        this.crystalStart = 0;
+        this.done = false;
+        this.motion = 1;
+        this.running = false;
+        this.raf = 0;
+        this.setConfig(id || "default");
+        this.resize();
+      }
+
+      setConfig(id) {
+        this.id = id;
+        this.config = TREE_CONFIGS[id] || TREE_CONFIGS.default;
+        this.primary = makeRgba(this.config.color, 0.9);
+        this.secondary = makeRgba(this.config.secondary, 0.86);
+        this.soft = makeRgba(this.config.color, 0.18);
+      }
+
+      resize() {
+        const rect = this.canvas.getBoundingClientRect();
+        this.width = Math.max(1, rect.width);
+        this.height = Math.max(1, rect.height);
+        this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+        this.canvas.width = Math.floor(this.width * this.dpr);
+        this.canvas.height = Math.floor(this.height * this.dpr);
+        this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        this.rootX = this.width * 0.5;
+        this.rootY = this.height * 0.85;
+        this.treeH = this.height * 0.58;
+        this.ctx.fillStyle = "#0f172a";
+        this.ctx.fillRect(0, 0, this.width, this.height);
+        this.reset();
+      }
+
+      reset() {
+        for (let i = 0; i < POOL_SIZE; i++) {
+          const p = this.pool[i];
+          const a = li(p.phase);
+          const r = randomLut[li(p.phase + 3)] * 30;
+          p.x = this.rootX + cosLut[a] * r;
+          p.y = this.rootY + sinLut[a] * r;
+          p.tx = p.x;
+          p.ty = p.y;
+          p.fx = p.x;
+          p.fy = p.y;
+        }
+      }
+
+      start() {
+        if (this.running) return;
+        this.running = true;
+        this.loop = this.loop || this.tick.bind(this);
+        this.raf = requestAnimationFrame(this.loop);
+      }
+
+      stop() {
+        this.running = false;
+        cancelAnimationFrame(this.raf);
+      }
+
+      tick(now) {
+        if (!this.running) return;
+        this.render(now);
+        this.raf = requestAnimationFrame(this.loop);
+      }
+
+      setProgress(v) {
+        this.targetProgress = Math.max(0, Math.min(100, Number(v) || 0));
+      }
+
+      triggerCrystallize() {
+        if (this.crystallizing) return;
+        this.setProgress(100);
+        this.progress = 100;
+        this.crystallizing = true;
+        this.crystalStart = performance.now();
+        for (let i = 0; i < POOL_SIZE; i++) {
+          this.pool[i].fx = this.pool[i].x;
+          this.pool[i].fy = this.pool[i].y;
+        }
+      }
+
+      targetFor(p, grow, bloom) {
+        const y = p.layer;
+        const h = this.treeH * grow;
+        const branch = p.side * y * y * (70 + p.seedC * 120) * Math.max(0, (this.progress - 50) / 50);
+        const type = this.config.trajectory;
+        let x = this.rootX;
+        let yy = this.rootY - h * y;
+        const t = this.frame;
+
+        if (type === "fluid") {
+          const a = li(p.phase + t);
+          const r = (30 + 150 * y) * grow;
+          x += cosLut[a] * r * p.seedB;
+          yy += sinLut[li(p.phase + t * 2)] * r * 0.32;
+        } else if (type === "curve") {
+          x += sinLut[li(y * 800 + t)] * 48 * y + branch;
+        } else if (type === "spiral") {
+          const a = li(p.phase + y * 900 + t);
+          x += cosLut[a] * (18 + y * 95) * grow;
+          yy += sinLut[a] * 22;
+        } else if (type === "pyramid") {
+          x += (((p.index % 17) / 16) - 0.5) * 300 * (1 - y) * grow;
+        } else if (type === "stack") {
+          x += ((p.index % 9) - 4) * 8 + (y > 0.84 ? ((p.index % 19) - 9) * 5 : 0);
+        } else if (type === "lightning") {
+          x += (randomLut[li(((y * 8) | 0) * 97 + p.index)] - 0.5) * 150 * grow + branch;
+        } else if (type === "sway") {
+          x += sinLut[li(t + y * 700)] * 55 * y + branch * 0.6;
+        } else if (type === "pendulum") {
+          x += sinLut[li(t)] * 85 * y + branch * 0.45;
+        } else if (type === "network") {
+          const a = li((p.index % 40) * 51 + t);
+          const r = (30 + ((p.index / 40) | 0) * 28) * grow;
+          x += cosLut[a] * r * (0.9 + y);
+          yy += sinLut[a] * r * 0.35;
+        } else {
+          x += branch * 0.28 + ((p.index % 7) - 3) * 1.4;
+        }
+
+        if (this.progress > 50 && type !== "fluid" && type !== "network") x += branch;
+        p.tx = x;
+        p.ty = yy;
+      }
+
+      render(now) {
+        this.frame++;
+        this.progress += (this.targetProgress - this.progress) * 0.075;
+
+        if (this.crystallizing) {
+          const k = Math.min(1, (now - this.crystalStart) / 2000);
+          this.motion = 1 - easeOutCubic(k);
+          if (k >= 1 && !this.done) {
+            this.done = true;
+            this.motion = 0;
+            window.onCrystallizeComplete();
+          }
+        } else {
+          this.motion = 1;
+          this.done = false;
+        }
+
+        const ctx = this.ctx;
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "rgba(15, 23, 42, 0.08)";
+        ctx.fillRect(0, 0, this.width, this.height);
+
+        const progress = this.progress;
+        const sprout = Math.min(1, progress / 20);
+        const trunk = Math.min(1, Math.max(0, (progress - 20) / 30));
+        const leaf = Math.min(1, Math.max(0, (progress - 50) / 30));
+        const bloom = Math.min(1, Math.max(0, (progress - 80) / 20));
+        const grow = progress < 20 ? sprout * 0.08 : progress < 50 ? trunk * 0.62 : 0.62 + leaf * 0.38;
+
+        for (let i = 0; i < POOL_SIZE; i++) {
+          const p = this.pool[i];
+          if (progress <= 20) {
+            const a = li(p.phase + this.frame * 3);
+            const r = p.seedB * 30;
+            p.tx = this.rootX + cosLut[a] * r + sinLut[li(this.frame + p.phase)] * 2;
+            p.ty = this.rootY + sinLut[a] * r + cosLut[li(this.frame + p.phase)] * 2;
+          } else {
+            this.targetFor(p, grow, bloom);
+          }
+          const follow = (progress < 20 ? 0.035 : progress < 50 ? 0.075 : 0.115) * this.motion;
+          p.x += (p.tx - p.x) * follow;
+          p.y += (p.ty - p.y) * follow;
+          p.opacity = progress <= 20 ? 0.3 + (0.5 + sinLut[li(this.frame * 2 + p.phase)] * 0.5) * 0.4 : 0.52 + leaf * 0.22 + bloom * 0.18;
+        }
+
+        if (this.config.trajectory === "network" || this.config.bloom === "crystal") {
+          ctx.save();
+          ctx.globalAlpha = 0.14 + bloom * 0.22;
+          ctx.strokeStyle = this.secondary;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let i = 0; i < POOL_SIZE - 5; i += 3) {
+            ctx.moveTo(this.pool[i].x, this.pool[i].y);
+            ctx.lineTo(this.pool[i + 5].x, this.pool[i + 5].y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        ctx.save();
+        ctx.shadowBlur = 5 + leaf * 8 + bloom * 10;
+        ctx.shadowColor = this.config.color;
+        for (let i = 0; i < POOL_SIZE; i++) {
+          const p = this.pool[i];
+          ctx.globalAlpha = p.opacity;
+          ctx.fillStyle = p.seedA > 0.72 ? this.secondary : this.primary;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.radius, 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+
+        this.drawBloom(bloom);
+      }
+
+      drawBloom(bloom) {
+        if (bloom <= 0.001) return;
+        const ctx = this.ctx;
+        const cx = this.rootX;
+        const cy = this.rootY - this.treeH * 0.68;
+        ctx.save();
+        ctx.globalAlpha = bloom * 0.38;
+        ctx.strokeStyle = this.secondary;
+        ctx.fillStyle = this.soft;
+        ctx.lineWidth = 1.5;
+        if (this.config.bloom === "yinyang") {
+          ctx.beginPath();
+          ctx.arc(cx, cy, 56, 0, TAU);
+          ctx.moveTo(cx, cy - 56);
+          ctx.bezierCurveTo(cx + 36, cy - 28, cx - 36, cy + 28, cx, cy + 56);
+          ctx.stroke();
+        } else if (this.config.bloom === "boulder") {
+          ctx.beginPath();
+          ctx.moveTo(cx, cy - 38);
+          ctx.lineTo(cx + 46, cy - 8);
+          ctx.lineTo(cx + 26, cy + 34);
+          ctx.lineTo(cx - 38, cy + 26);
+          ctx.lineTo(cx - 46, cy - 12);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        } else if (this.config.bloom === "mist") {
+          ctx.strokeStyle = "rgba(255,255,255,0.82)";
+          ctx.beginPath();
+          ctx.moveTo(cx, this.rootY - this.treeH * 0.52);
+          ctx.lineTo(cx, this.rootY - this.treeH * 0.98);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.arc(cx, cy, 80 + sinLut[li(this.frame)] * 10, 0, TAU);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      getImageData() {
+        return this.canvas.toDataURL("image/png");
+      }
+    }
+
+    let treeEngine = null;
+    window.initTree = function initTree(canvasElement, philosopherId) {
+      if (treeEngine) treeEngine.stop();
+      treeEngine = new TreeEngine(canvasElement, philosopherId || "default");
+      treeEngine.start();
+      return treeEngine;
+    };
+    window.setProgress = function setProgress(value) {
+      if (treeEngine) treeEngine.setProgress(value);
+    };
+    window.triggerCrystallize = function triggerCrystallize() {
+      if (treeEngine) treeEngine.triggerCrystallize();
+    };
+    window.getTreeImageData = function getTreeImageData() {
+      return treeEngine ? treeEngine.getImageData() : "";
+    };
+    window.onCrystallizeComplete = function onCrystallizeComplete() {};
+
+    /* =========================
+       消息管理
+       ========================= */
+    const app = document.getElementById("app");
+    const loading = document.getElementById("loading");
+    const canvas = document.getElementById("treeCanvas");
+    const mentorBar = document.getElementById("mentorBar");
+    const messages = document.getElementById("messages");
+    const input = document.getElementById("userInput");
+    const inputWrap = document.getElementById("inputWrap");
+    const sendBtn = document.getElementById("sendBtn");
+    const saveBtn = document.getElementById("saveBtn");
+    const preview = document.getElementById("preview");
+    const previewImage = document.getElementById("previewImage");
+    const previewTitle = document.getElementById("previewTitle");
+    const closePreview = document.getElementById("closePreview");
+
+    const idle = window.requestIdleCallback || function fallback(cb) {
+      return setTimeout(cb, 0);
+    };
+
+    let currentMentor = null;
+    let firstMatched = false;
+    let userTurns = 0;
+    let typing = false;
+    let currentProgress = 0;
+
+    function scheduleDom(task) {
+      Promise.resolve().then(function runMicrotask() {
+        idle(task);
+      });
+    }
+
+    function limitMessages() {
+      while (messages.children.length > 20) {
+        messages.removeChild(messages.firstElementChild);
+      }
+    }
+
+    function scrollBottom() {
+      messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
+    }
+
+    function addMessage(role, text) {
+      const row = document.createElement("div");
+      row.className = "message " + role;
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text || "";
+      row.appendChild(bubble);
+      scheduleDom(function appendMessage() {
+        messages.appendChild(row);
+        limitMessages();
+        scrollBottom();
+      });
+      return bubble;
+    }
+
+    function renderLoadingHeader(text, spinning) {
+      mentorBar.classList.add("fade");
+      setTimeout(function swapHeader() {
+        mentorBar.innerHTML = spinning
+          ? '<div class="orb"></div><div class="mentorText"><div class="mentorName">' + text + '</div><div class="mentorSlogan">请让第一句话自然抵达它的导师</div></div>'
+          : '<div class="mentorText"><div class="mentorName">' + text + '<span class="loadingDots"><span></span><span></span><span></span></span></div></div>';
+        mentorBar.classList.remove("fade");
+      }, 150);
+    }
+
+    function renderMentorHeader(mentor) {
+      document.documentElement.style.setProperty("--mentor-color", mentor.color);
+      document.documentElement.style.setProperty("--mentor-glow", makeRgba(mentor.color, 0.38));
+      mentorBar.classList.add("fade");
+      setTimeout(function swapMentor() {
+        mentorBar.innerHTML =
+          '<div class="avatar" style="background:' + mentor.color + '">' + mentor.initial + '</div>' +
+          '<div class="mentorText"><div class="mentorName">' + mentor.name + '</div>' +
+          '<div class="mentorSlogan">' + mentor.slogan + '</div></div>';
+        mentorBar.classList.remove("fade");
+      }, 150);
+    }
+
+    /* =========================
+       打字机效果
+       ========================= */
+    function targetProgressForTurn(turn) {
+      if (turn >= 8) return 100;
+      if (turn >= 6) return 85;
+      if (turn >= 4) return 55;
+      if (turn >= 2) return 25;
+      return currentProgress;
+    }
+
+    function animateProgressTo(next, duration) {
+      const start = currentProgress;
+      const delta = next - start;
+      const startTime = performance.now();
+      function step() {
+        const k = Math.min(1, (performance.now() - startTime) / duration);
+        currentProgress = start + delta * k;
+        setProgress(currentProgress);
+        if (k < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    function typeText(bubble, text, done) {
+      let i = 0;
+      typing = true;
+      sendBtn.disabled = true;
+      function tick() {
+        bubble.textContent = text.slice(0, i);
+        scrollBottom();
+        if (i < text.length) {
+          i++;
+          setTimeout(tick, 40);
+        } else {
+          typing = false;
+          sendBtn.disabled = false;
+          if (done) done();
+        }
+      }
+      tick();
+    }
+
+    function replyForMentor(mentor) {
+      const pool = REPLIES[mentor.id] || REPLIES.wangYangming;
+      return pool[(userTurns - 1) % pool.length];
+    }
+
+    function startAiReply() {
+      const bubble = addMessage("ai", "");
+      const reply = replyForMentor(currentMentor);
+      const nextProgress = targetProgressForTurn(userTurns);
+      if (nextProgress > currentProgress) {
+        animateProgressTo(nextProgress, Math.max(1200, reply.length * 40));
+      }
+      typeText(bubble, reply, function afterTyped() {
+        if (userTurns >= 8 && currentProgress >= 99.5) {
+          triggerCrystallize();
+        }
+      });
+    }
+
+    function sendMessage() {
+      if (typing) return;
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      userTurns++;
+      addMessage("user", text);
+
+      if (!firstMatched) {
+        firstMatched = true;
+        renderLoadingHeader("正在匹配...", true);
+        const mentor = matchPhilosopher(text);
+        setTimeout(function finishMatch() {
+          currentMentor = mentor;
+          renderMentorHeader(mentor);
+          initTree(canvas, mentor.id);
+          currentProgress = 0;
+          setProgress(0);
+          startAiReply();
+        }, 2000);
+      } else {
+        startAiReply();
+      }
+    }
+
+    /* =========================
+       页面事件与卡片预览接口
+       ========================= */
+    sendBtn.addEventListener("click", sendMessage);
+    input.addEventListener("keydown", function onKeydown(event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+    input.addEventListener("focus", function onFocus() {
+      inputWrap.classList.add("focused");
+    });
+    input.addEventListener("blur", function onBlur() {
+      inputWrap.classList.remove("focused");
+    });
+    saveBtn.addEventListener("click", function onSave() {
+      previewImage.src = getTreeImageData();
+      previewTitle.textContent = currentMentor ? currentMentor.name + "的此刻" : "保存此刻";
+      preview.classList.add("show");
+    });
+    closePreview.addEventListener("click", function onClose() {
+      preview.classList.remove("show");
+    });
+    window.addEventListener("resize", function onResize() {
+      if (treeEngine) treeEngine.resize();
+    }, { passive: true });
+    document.addEventListener("visibilitychange", function onVisibility() {
+      if (!treeEngine) return;
+      if (document.visibilityState === "hidden") treeEngine.stop();
+      else treeEngine.start();
+    });
+
+    renderLoadingHeader("正在为您匹配跨时空导师...", false);
+    initTree(canvas, "default");
+    setProgress(0);
+    window.addEventListener("load", function onLoad() {
+      setTimeout(function showApp() {
+        loading.classList.add("hide");
+        app.classList.add("ready");
+        input.focus();
+      }, 450);
+    });
+  </script>
+</body>
+</html>
